@@ -31,9 +31,13 @@ public class LoanGuardTests
     private static Loan SettledLoan()
     {
         var loan = ActiveLoan();
-        var paymentId = Guid.NewGuid();
-        loan.ReceivePayment(paymentId, Principal, installmentNo: 1, "evt_test_1", Now);
-        loan.Settle(paymentId, Now);
+        var lastPaymentId = Guid.Empty;
+        foreach (var row in loan.Schedule!)
+        {
+            lastPaymentId = Guid.NewGuid();
+            loan.ReceivePayment(lastPaymentId, row.Payment, row.Number, $"evt_test_{row.Number}", Now);
+        }
+        loan.Settle(lastPaymentId, Now);
         return loan;
     }
 
@@ -83,7 +87,7 @@ public class LoanGuardTests
     public void Settle_WhenOutstandingRemains_Throws()
     {
         var loan = ActiveLoan();
-        loan.ReceivePayment(Guid.NewGuid(), 40_000m, 1, "evt_test_1", Now);
+        loan.ReceivePayment(Guid.NewGuid(), 8_884.88m, 1, "evt_test_1", Now); // exact installment 1
 
         Assert.Throws<InvalidLoanTransitionException>(() => loan.Settle(Guid.NewGuid(), Now));
     }
@@ -146,17 +150,6 @@ public class LoanGuardTests
 
         Assert.Throws<ArgumentOutOfRangeException>(
             () => loan.ReceivePayment(Guid.NewGuid(), amount, 1, "evt_test_1", Now));
-    }
-
-    [Fact]
-    public void ReceivePayment_ExceedingOutstanding_Throws()
-    {
-        // Slice 1 policy: refuse overpayment outright. The real over/under
-        // payment rules arrive with the amortization schedule.
-        var loan = ActiveLoan();
-
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => loan.ReceivePayment(Guid.NewGuid(), Principal + 0.01m, 1, "evt_test_1", Now));
     }
 
     [Fact]

@@ -53,7 +53,7 @@ public class LoanLifecycleTests
     }
 
     [Fact]
-    public void Disburse_WhenApproved_ActivatesLoanAndStartsOutstandingBalance()
+    public void Disburse_WhenApproved_ActivatesLoanAndBuildsSchedule()
     {
         var loan = OriginatedLoan();
         loan.Approve("officer-1", Now);
@@ -62,27 +62,34 @@ public class LoanLifecycleTests
 
         Assert.Equal(LoanStatus.Active, loan.Status);
         Assert.Equal(Principal, loan.OutstandingBalance);
+        Assert.NotNull(loan.Schedule);
+        Assert.Equal(12, loan.Schedule!.Count);
     }
 
     [Fact]
-    public void ReceivePayment_WhenActive_ReducesOutstandingBalance()
+    public void ReceivePayment_ExactDueAmount_AdvancesBalanceToScheduleRow()
     {
         var loan = ActiveLoan();
 
-        loan.ReceivePayment(Guid.NewGuid(), 40_000m, installmentNo: 1, "evt_test_1", Now);
+        loan.ReceivePayment(Guid.NewGuid(), 8_884.88m, installmentNo: 1, "evt_test_1", Now);
 
         Assert.Equal(LoanStatus.Active, loan.Status);
-        Assert.Equal(60_000m, loan.OutstandingBalance);
+        Assert.Equal(92_115.12m, loan.OutstandingBalance); // remaining balance of schedule row 1
+        Assert.Equal(2, loan.NextInstallmentNo);
     }
 
     [Fact]
-    public void Settle_WhenOutstandingIsZero_MovesToSettled()
+    public void Settle_AfterAllInstallmentsPaid_MovesToSettled()
     {
         var loan = ActiveLoan();
-        var finalPaymentId = Guid.NewGuid();
-        loan.ReceivePayment(finalPaymentId, Principal, installmentNo: 1, "evt_test_1", Now);
+        var lastPaymentId = Guid.Empty;
+        foreach (var row in loan.Schedule!)
+        {
+            lastPaymentId = Guid.NewGuid();
+            loan.ReceivePayment(lastPaymentId, row.Payment, row.Number, $"evt_test_{row.Number}", Now);
+        }
 
-        loan.Settle(finalPaymentId, Now);
+        loan.Settle(lastPaymentId, Now);
 
         Assert.Equal(LoanStatus.Settled, loan.Status);
         Assert.Equal(0m, loan.OutstandingBalance);
@@ -111,7 +118,7 @@ public class LoanLifecycleTests
     public void LoadFromHistory_ReplaysToIdenticalState()
     {
         var original = ActiveLoan();
-        original.ReceivePayment(Guid.NewGuid(), 25_000m, installmentNo: 1, "evt_test_1", Now);
+        original.ReceivePayment(Guid.NewGuid(), 8_884.88m, 1, "evt_test_1", Now);
 
         var replayed = Loan.LoadFromHistory(original.UncommittedEvents);
 
@@ -119,6 +126,9 @@ public class LoanLifecycleTests
         Assert.Equal(original.Status, replayed.Status);
         Assert.Equal(original.OutstandingBalance, replayed.OutstandingBalance);
         Assert.Equal(original.Version, replayed.Version);
+        Assert.Equal(original.NextInstallmentNo, replayed.NextInstallmentNo);
+        // Installment is a record: Assert.Equal compares the rows by value.
+        Assert.Equal(original.Schedule, replayed.Schedule);
         // Replayed events are history, not new facts — nothing to persist again.
         Assert.Empty(replayed.UncommittedEvents);
     }

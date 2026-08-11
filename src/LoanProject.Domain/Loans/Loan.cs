@@ -19,15 +19,25 @@ public sealed class Loan
     public RateType RateType { get; private set; }
     public int TermMonths { get; private set; }
 
-    // Slice 1 simplification: principal-only balance, and it starts at zero —
-    // the debt exists only once money has actually been disbursed. Interest
-    // joins in the amortization slices; the state-machine guards stay as-is.
+    // Principal remaining. Zero until disbursement (the debt exists only once
+    // money has actually gone out); afterwards it tracks the RemainingBalance
+    // of the last paid schedule row.
     public decimal OutstandingBalance { get; private set; }
 
     /// <summary>Number of events applied — the optimistic-concurrency handle for Phase 2.</summary>
     public int Version { get; private set; }
 
     public IReadOnlyList<IDomainEvent> UncommittedEvents => _uncommittedEvents;
+
+    /// <summary>
+    /// Null until money is disbursed. Derived state: never stored in events —
+    /// rebuilt inside Apply(LoanDisbursed) from the loan terms, which is
+    /// replay-safe because the calculators are pure functions.
+    /// </summary>
+    public IReadOnlyList<Installment>? Schedule { get; private set; }
+
+    /// <summary>1-based number of the next installment due.</summary>
+    public int NextInstallmentNo { get; private set; } = 1;
 
     private Loan() { }
 
@@ -79,10 +89,18 @@ public sealed class Loan
         EnsureStatus(LoanStatus.Active, "receive a payment for");
         if (amount <= 0)
             throw new ArgumentOutOfRangeException(nameof(amount), amount, "Payment amount must be positive.");
-        // Slice 1 policy: refuse overpayment outright. The real over/under
-        // payment rules arrive with the amortization schedule.
-        if (amount > OutstandingBalance)
-            throw new ArgumentOutOfRangeException(nameof(amount), amount, "Payment exceeds the outstanding balance.");
+        if (installmentNo != NextInstallmentNo)
+            throw new ArgumentOutOfRangeException(nameof(installmentNo), installmentNo,
+                $"Installments are paid in order; next due is installment {NextInstallmentNo}.");
+
+        // Exact-amount policy: no partial payments, no prepayments (an ADR
+        // decision — both are deferred business features, not accidents).
+        // The due figure already includes the final installment's
+        // rounding-drift adjustment.
+        var due = Schedule![installmentNo - 1];
+        if (amount != due.Payment)
+            throw new ArgumentException(
+                $"Payment must match the due installment exactly: expected {due.Payment}.", nameof(amount));
 
         Raise(new PaymentReceived(paymentId, amount, installmentNo, stripeEventId, utcNow));
     }
@@ -145,10 +163,17 @@ public sealed class Loan
                 break;
             case LoanDisbursed e:
                 OutstandingBalance = e.DisbursedAmount;
+                // Derived, not stored in the event: the calculators are pure
+                // functions, so replay always rebuilds the identical schedule
+                // from the loan terms.
+                Schedule = RateType == RateType.Flat
+                    ? AmortizationCalculator.BuildFlatSchedule(Principal, AnnualRate, TermMonths)
+                    : AmortizationCalculator.BuildSchedule(Principal, AnnualRate, TermMonths);
                 Status = LoanStatus.Active;
                 break;
             case PaymentReceived e:
-                OutstandingBalance -= e.Amount;
+                OutstandingBalance = Schedule![e.InstallmentNo - 1].RemainingBalance;
+                NextInstallmentNo = e.InstallmentNo + 1;
                 break;
             case LoanSettled:
                 Status = LoanStatus.Settled;
