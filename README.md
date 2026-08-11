@@ -6,7 +6,7 @@ A mini loan management API built around financial-services backend patterns: amo
 
 ## Roadmap Progress
 
-- [ ] Phase 1 — Domain & core logic (amortization, interest, event-sourced `Loan` + state machine)
+- [x] Phase 1 — Domain & core logic (amortization, interest, event-sourced `Loan` + state machine)
 - [ ] Phase 2 — Data layer (EF Core, event store, stored procedures, MongoDB)
 - [ ] Phase 3 — Azure SQL Database compatibility
 - [ ] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
