@@ -32,8 +32,6 @@
       "PowerShell(docker manifest inspect:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
-      "Bash(gh pr create:*)",
       "Bash(dotnet:*)",
       "Bash(docker run:*)",
       "Bash(docker compose:*)",
