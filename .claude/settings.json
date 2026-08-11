@@ -46,8 +46,6 @@
       "Bash(stripe:*)",
       "Bash(k6:*)",
       "Bash(vault:*)",
-      "PowerShell(git push:*)",
-      "PowerShell(gh pr create:*)",
       "PowerShell(dotnet:*)",
       "PowerShell(docker run:*)",
       "PowerShell(docker compose:*)",
