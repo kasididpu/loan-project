@@ -103,9 +103,9 @@ docs: add CLAUDE.md with project conventions
 
 ### Branching
 
-- `main` is always stable.
+- `main` is always stable and is updated **only through pull requests** — never by local merges or direct pushes.
 - One branch per phase: `feature/phase-<n>-<short-name>` (e.g., `feature/phase-1-domain`).
-- Merge into `main` with `--no-ff`; delete the branch after merging.
+- The pull request is merged on GitHub after human review; delete the branch after merging.
 
 ### Commit Hygiene
 
