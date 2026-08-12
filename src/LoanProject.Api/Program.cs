@@ -1,3 +1,5 @@
+using LoanProject.Application.Loans;
+using LoanProject.Infrastructure.EventStore;
 using LoanProject.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +11,7 @@ builder.Services.AddSwaggerGen();
 var connectionString = builder.Configuration.GetConnectionString("LoanDb")
     ?? throw new InvalidOperationException("Connection string 'LoanDb' is not configured.");
 builder.Services.AddDbContext<LoanDbContext>(options => options.UseSqlServer(connectionString));
+builder.Services.AddScoped<ILoanRepository>(_ => new LoanEventStoreRepository(connectionString));
 
 var app = builder.Build();
 
