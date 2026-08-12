@@ -129,7 +129,49 @@ public sealed class Loan
         return loan;
     }
 
+    /// <summary>Captures every non-derived field for the snapshot table.</summary>
+    public LoanSnapshotState ToSnapshot() => new(
+        Id, Status, Principal, AnnualRate, RateType, TermMonths,
+        OutstandingBalance, NextInstallmentNo, Version);
+
+    /// <summary>
+    /// Third way a Loan comes to life (besides Originate and LoadFromHistory):
+    /// restore from a snapshot, then replay only the events that happened
+    /// after it. Taking the tail here keeps replay a one-entry-point affair.
+    /// </summary>
+    public static Loan FromSnapshot(LoanSnapshotState snapshot, IEnumerable<IDomainEvent> subsequentEvents)
+    {
+        var loan = new Loan
+        {
+            Id = snapshot.Id,
+            Status = snapshot.Status,
+            Principal = snapshot.Principal,
+            AnnualRate = snapshot.AnnualRate,
+            RateType = snapshot.RateType,
+            TermMonths = snapshot.TermMonths,
+            OutstandingBalance = snapshot.OutstandingBalance,
+            NextInstallmentNo = snapshot.NextInstallmentNo,
+            Version = snapshot.Version,
+        };
+
+        // The schedule exists from disbursement onward. It is never part of
+        // the snapshot — rebuilt here so the tail's PaymentReceived events
+        // can look their installments up during replay.
+        if (loan.Status is LoanStatus.Active or LoanStatus.Settled or LoanStatus.Defaulted)
+            loan.Schedule = loan.BuildScheduleFromTerms();
+
+        foreach (var domainEvent in subsequentEvents)
+            loan.Apply(domainEvent);
+
+        return loan;
+    }
+
     public void ClearUncommittedEvents() => _uncommittedEvents.Clear();
+
+    private IReadOnlyList<Installment> BuildScheduleFromTerms() =>
+        RateType == RateType.Flat
+            ? AmortizationCalculator.BuildFlatSchedule(Principal, AnnualRate, TermMonths)
+            : AmortizationCalculator.BuildSchedule(Principal, AnnualRate, TermMonths);
 
     private void EnsureStatus(LoanStatus required, string action)
     {
@@ -166,9 +208,7 @@ public sealed class Loan
                 // Derived, not stored in the event: the calculators are pure
                 // functions, so replay always rebuilds the identical schedule
                 // from the loan terms.
-                Schedule = RateType == RateType.Flat
-                    ? AmortizationCalculator.BuildFlatSchedule(Principal, AnnualRate, TermMonths)
-                    : AmortizationCalculator.BuildSchedule(Principal, AnnualRate, TermMonths);
+                Schedule = BuildScheduleFromTerms();
                 Status = LoanStatus.Active;
                 break;
             case PaymentReceived e:
