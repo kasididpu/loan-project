@@ -30,8 +30,12 @@ public static class StripeWebhookEndpoints
         Event stripeEvent;
         try
         {
+            // throwOnApiVersionMismatch: false — the account's API version
+            // moves ahead of the SDK's pinned one; the HMAC signature check
+            // (the actual security boundary) is unaffected by this flag.
             stripeEvent = EventUtility.ConstructEvent(
-                payload, request.Headers["Stripe-Signature"], webhookSecret);
+                payload, request.Headers["Stripe-Signature"], webhookSecret,
+                throwOnApiVersionMismatch: false);
         }
         catch (StripeException)
         {
