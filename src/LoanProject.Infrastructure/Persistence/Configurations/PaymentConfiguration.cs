@@ -30,5 +30,19 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         // Same reason as CustomerConfiguration: get-only properties must be
         // mapped explicitly — EF's convention only sees settable properties.
         builder.Property(p => p.PaidAtUtc);
+
+        // Shaped exactly like the statement query (WHERE LoanId = @loanId
+        // ORDER BY PaidAtUtc): the first column turns the scan into a seek,
+        // the second hands rows back pre-sorted so the plan loses its Sort
+        // operator. Evidence: docs/execution-plans (before/after capture).
+        builder.HasIndex(p => new { p.LoanId, p.PaidAtUtc })
+            .HasDatabaseName("IX_Payment_LoanId_PaidAtUtc");
+
+        // One Stripe event, one payment — the webhook idempotency rule
+        // (phase 4) enforced mechanically by the database, same referee
+        // philosophy as UQ_EventStore_AggVer on the ledger.
+        builder.HasIndex(p => p.StripeEventId)
+            .IsUnique()
+            .HasDatabaseName("UX_Payment_StripeEventId");
     }
 }
