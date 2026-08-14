@@ -1,13 +1,17 @@
 using LoanProject.Application;
+using LoanProject.Application.Audit;
 using LoanProject.Application.Customers;
+using LoanProject.Application.LoanApplications;
 using LoanProject.Application.Loans;
 using LoanProject.Application.Payments;
 using LoanProject.Application.Reports;
 using LoanProject.Infrastructure.EventStore;
+using LoanProject.Infrastructure.Mongo;
 using LoanProject.Infrastructure.Persistence;
 using LoanProject.Infrastructure.Persistence.Repositories;
 using LoanProject.Infrastructure.Reports;
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +28,16 @@ builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<LoanDbContext>());
 builder.Services.AddScoped<IEndOfDaySummaryQuery>(_ => new EndOfDaySummaryQuery(connectionString));
 builder.Services.AddScoped<DevDataSeeder>();
+
+var mongoConnectionString = builder.Configuration.GetConnectionString("Mongo")
+    ?? throw new InvalidOperationException("Connection string 'Mongo' is not configured.");
+// Unlike the scoped DbContext, the Mongo client is a singleton: it is
+// thread-safe and owns its connection pool for the whole process.
+builder.Services.AddSingleton<IMongoClient>(_ => new MongoClient(mongoConnectionString));
+builder.Services.AddSingleton(provider =>
+    provider.GetRequiredService<IMongoClient>().GetDatabase("LoanProject"));
+builder.Services.AddScoped<IAuditLogWriter, MongoAuditLogWriter>();
+builder.Services.AddScoped<ILoanApplicationStore, MongoLoanApplicationStore>();
 
 var app = builder.Build();
 

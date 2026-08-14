@@ -23,5 +23,26 @@ services:
       retries: 10
       start_period: 20s
 
+  mongodb:
+    # arm64 manifest verified (docker manifest inspect mongo:8) — unlike SQL
+    # Server, this one runs on the Pi5 directly at deploy time.
+    image: mongo:8
+    container_name: loan-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      # Non-secret local dev default, same policy as the SQL password.
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD:-LoanDevMongo1}"
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u root -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --eval \"db.adminCommand('ping').ok\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   sqlserver-data:
+  mongodb-data:
