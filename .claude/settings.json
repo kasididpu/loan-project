@@ -1,9 +1,4 @@
 {
-  "enabledPlugins": {
-    "csharp-lsp@claude-plugins-official": true,
-    "github@claude-plugins-official": true,
-    "stripe@claude-plugins-official": true
-  },
   "permissions": {
     "allow": [
       "Bash(git status:*)",
@@ -66,5 +61,10 @@
       "Read(**/*.key)",
       "Read(**/appsettings.*.Local.json)"
     ]
+  },
+  "enabledPlugins": {
+    "csharp-lsp@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "stripe@claude-plugins-official": true
   }
 }

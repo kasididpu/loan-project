@@ -18,6 +18,14 @@ notes/
 .remember/
 .claude/settings.local.json
 
+# Personal AI tooling — installed per machine, reinstallable, not project code
+.agents/
+skills-lock.json
+.claude/skills/connect-*/
+.claude/skills/stripe-*/
+.claude/skills/upgrade-stripe/
+.tmp.driveupload/
+
 # docs/ is ignored TEMPORARILY during early phases; it will be un-ignored once
 # public documentation starts landing (execution plans, MCP docs, architecture diagrams).
 docs/
