@@ -22,6 +22,26 @@ services:
       retries: 10
       start_period: 20s
 
+  vault:
+    # Dev-mode Vault (phase 3.5): in-memory, auto-unsealed, root token is a
+    # non-secret local default. Every runtime secret the app reads goes
+    # through here from now on — most importantly the Stripe key in phase 4,
+    # which must never have an appsettings phase in its life.
+    image: hashicorp/vault:1.17
+    container_name: loan-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "${VAULT_DEV_ROOT_TOKEN_ID:-loan-dev-root}"
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD-SHELL", "VAULT_ADDR=http://127.0.0.1:8200 vault status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   mongodb:
     # Operational audit log + flexible-schema loan applications (phase 2).
     image: mongo:8

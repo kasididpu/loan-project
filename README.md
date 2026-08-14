@@ -47,7 +47,8 @@ Requires Docker Desktop and the .NET 8 SDK.
 
 ```bash
 git clone <this repo> && cd loan-project
-docker compose up -d      # SQL Server 2022 + MongoDB 8 (more services join in later phases)
+docker compose up -d      # SQL Server 2022 + MongoDB 8 + Vault dev mode (more join in later phases)
+sh scripts/seed-vault-dev.sh   # put the local dev secrets into Vault (idempotent)
 
 dotnet tool install --global dotnet-ef
 dotnet ef database update --project src/LoanProject.Infrastructure --startup-project src/LoanProject.Api
