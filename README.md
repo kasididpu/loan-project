@@ -8,25 +8,24 @@ A mini loan management API built around financial-services backend patterns: amo
 
 - [x] Phase 1 — Domain & core logic (amortization, interest, event-sourced `Loan` + state machine)
 - [x] Phase 2 — Data layer (EF Core, event store, stored procedures, MongoDB)
-- [ ] Phase 3 — Azure SQL Database compatibility
 - [ ] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
 - [ ] Phase 4 — Stripe payment integration (Test Mode)
-- [ ] Phase 4.5 — Internal MCP server
 - [ ] Phase 5 — Async processing, event dispatcher, reconciliation/settlement
 - [ ] Phase 6 — CQRS write/read databases + reporting
 - [ ] Phase 7 — KYC/AML rules
 - [ ] Phase 8 — Auth, authorization & data protection
-- [ ] Phase 9 — High availability (API replicas)
+- [ ] Phase 9 — High availability (API replicas, local compose)
 - [ ] Phase 10 — Performance & load testing
-- [ ] Phase 11 — DevOps, CI/CD & observability
+- [ ] Phase 11 — DevOps, CI & observability
 - [ ] Phase 12 — Documentation
+- [ ] Optional final step — cloud deployment path (Azure SQL Database compatibility)
 
 ## Tech Stack
 
 | Area | Choice |
 |---|---|
 | API | .NET 8 Web API, Clean Architecture |
-| Relational DB | SQL Server (dev, Docker) → Azure SQL Database (deploy) |
+| Relational DB | SQL Server (Docker); schema kept Azure SQL Database–compatible |
 | Event sourcing | Append-only event store + snapshots, `Loan` aggregate only |
 | Event streaming | Redpanda (Kafka-compatible) — CQRS sync |
 | Messaging | RabbitMQ — async tasks |
@@ -36,11 +35,11 @@ A mini loan management API built around financial-services backend patterns: amo
 | Secrets | HashiCorp Vault behind an `ISecretProvider` interface |
 | Observability | Serilog → Seq |
 | Testing | xUnit + Moq; k6 for load testing |
-| CI/CD | GitHub Actions + self-hosted ARM64 runner (Raspberry Pi 5, k3s) |
+| CI | GitHub Actions (build, test, secret scan) |
 
-## Environments
+## Environment
 
-**Windows** (dev — SQL Server in Docker, x86) → **Raspberry Pi 5** (deploy — ARM64, k3s) → **Azure SQL Database** (replaces SQL Server on the deploy path).
+**Local-first by design.** The entire system runs on one machine with Docker Desktop — that is the deliverable, and anyone who clones the repo gets the same experience. The relational schema is kept Azure SQL Database–compatible, so a cloud deployment path remains open as an optional final step.
 
 ## Run It Locally
 

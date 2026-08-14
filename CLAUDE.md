@@ -12,10 +12,9 @@ A mini loan management API built with **.NET 8**, showcasing financial-services 
 - Payment integration with **Stripe** (Test Mode) — webhooks, signature verification, idempotency
 - Async processing with **RabbitMQ**, caching with **Redis**, audit logs in **MongoDB**
 - Secret management with **HashiCorp Vault** behind an `ISecretProvider` interface
-- An internal **MCP server** (C#) used during AI-assisted development
 - Observability with **Serilog → Seq**; testing with **xUnit + Moq + k6**
 
-Three-environment architecture: **Windows dev** (SQL Server in Docker, x86) → **Raspberry Pi 5 deploy** (ARM64, k3s) → **Azure SQL Database** (Free Tier, replaces SQL Server on the deploy path).
+**Local-first architecture:** the entire system runs on one dev machine through `docker compose` — that is the deliverable. The relational schema is kept **Azure SQL Database**-compatible so a cloud deployment path remains open as an optional final step.
 
 ## Language Policy
 
@@ -26,8 +25,7 @@ All repository artifacts are **English only**: code, comments, XML docs, commit 
 1. Work incrementally, **one phase at a time**; stop for user review before continuing. Never scaffold the whole project at once.
 2. Money-related business logic: **explain the formula and get user confirmation before committing.** The user must fully understand every calculation.
 3. **Payment-path changes always require human review before commit.**
-4. Check **ARM64 image availability** (`docker manifest inspect <image>`) before adding any new Docker service.
-5. Flag **SQL Server vs Azure SQL Database** feature differences immediately when found (e.g., cross-database queries, SQL Agent jobs are unavailable on the PaaS side).
+4. Flag **SQL Server vs Azure SQL Database** feature differences immediately when found (e.g., cross-database queries, SQL Agent jobs are unavailable on the PaaS side) — the optional cloud path must stay viable.
 
 ## Architecture & Code Style
 
@@ -117,4 +115,3 @@ docs: add CLAUDE.md with project conventions
 - Never request, display, or write real secret values in prompts, code, logs, or documents — reference **Vault paths only**.
 - All data in dev databases is **seed/test data**. No real customer PII or unmasked financial data anywhere.
 - Stripe: **Test Mode only.** Live keys are never used.
-- MCP tools are **read-only** and connect to the local dev database only.
