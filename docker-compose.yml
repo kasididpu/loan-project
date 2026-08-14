@@ -1,10 +1,9 @@
-# Local dev infrastructure (Windows, x86_64). Services are added phase by
-# phase; the deploy path (Pi5/ARM64 + Azure SQL) uses its own manifests.
+# Local infrastructure — the whole system runs here by design. Services
+# are added phase by phase.
 services:
   sqlserver:
-    # amd64-only image (no ARM64 manifest — verified via docker manifest
-    # inspect); that is exactly why the deploy path swaps to Azure SQL
-    # Database instead of running SQL Server on the Pi5.
+    # The schema is kept Azure SQL Database-compatible, so an optional
+    # cloud deployment path stays open as a final step.
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: loan-sqlserver
     environment:
@@ -24,8 +23,7 @@ services:
       start_period: 20s
 
   mongodb:
-    # arm64 manifest verified (docker manifest inspect mongo:8) — unlike SQL
-    # Server, this one runs on the Pi5 directly at deploy time.
+    # Operational audit log + flexible-schema loan applications (phase 2).
     image: mongo:8
     container_name: loan-mongodb
     environment:
