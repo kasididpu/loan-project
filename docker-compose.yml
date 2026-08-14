@@ -1,0 +1,48 @@
+# Local dev infrastructure (Windows, x86_64). Services are added phase by
+# phase; the deploy path (Pi5/ARM64 + Azure SQL) uses its own manifests.
+services:
+  sqlserver:
+    # amd64-only image (no ARM64 manifest — verified via docker manifest
+    # inspect); that is exactly why the deploy path swaps to Azure SQL
+    # Database instead of running SQL Server on the Pi5.
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: loan-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      # Non-secret local dev default, overridable via env. Real environments
+      # get credentials from Vault through ISecretProvider (Phase 3.5).
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-LoanDev!Passw0rd}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mongodb:
+    # arm64 manifest verified (docker manifest inspect mongo:8) — unlike SQL
+    # Server, this one runs on the Pi5 directly at deploy time.
+    image: mongo:8
+    container_name: loan-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      # Non-secret local dev default, same policy as the SQL password.
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD:-LoanDevMongo1}"
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u root -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --eval \"db.adminCommand('ping').ok\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  sqlserver-data:
+  mongodb-data:

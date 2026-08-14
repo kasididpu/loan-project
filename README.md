@@ -7,7 +7,7 @@ A mini loan management API built around financial-services backend patterns: amo
 ## Roadmap Progress
 
 - [x] Phase 1 — Domain & core logic (amortization, interest, event-sourced `Loan` + state machine)
-- [ ] Phase 2 — Data layer (EF Core, event store, stored procedures, MongoDB)
+- [x] Phase 2 — Data layer (EF Core, event store, stored procedures, MongoDB)
 - [ ] Phase 3 — Azure SQL Database compatibility
 - [ ] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
 - [ ] Phase 4 — Stripe payment integration (Test Mode)
@@ -44,15 +44,28 @@ A mini loan management API built around financial-services backend patterns: amo
 
 ## Run It Locally
 
-> Not runnable yet — Phase 1 has not landed. This section is filled in as the pieces become real.
+Requires Docker Desktop and the .NET 8 SDK.
 
-The target developer experience, kept as a hard requirement throughout:
+```bash
+git clone <this repo> && cd loan-project
+docker compose up -d      # SQL Server 2022 + MongoDB 8 (more services join in later phases)
 
-1. `git clone` and `docker compose up` — all backing services (SQL Server, Redis, RabbitMQ, Redpanda, MongoDB, Seq, Vault) start locally.
-2. Seed Vault (dev mode) and the database with the provided scripts.
-3. Open Swagger and exercise the full flow: create loan → approve → payment webhook → query status → reports.
+dotnet tool install --global dotnet-ef
+dotnet ef database update --project src/LoanProject.Infrastructure --startup-project src/LoanProject.Api
 
-No Azure account or paid service is required to run locally; Stripe integration uses Test Mode, which is free to set up.
+dotnet test               # domain unit tests + integration tests against both containers
+dotnet run --project src/LoanProject.Api   # dev startup seeds sample data, Swagger at /swagger
+```
+
+The dev seed creates two customers and one event-sourced loan with real
+history in the ledger (originated → approved → disbursed → first
+installment paid), so both worlds have data to explore immediately.
+
+The target end state, kept as a hard requirement throughout: `docker
+compose up` starts every backing service (Redis, RabbitMQ, Redpanda, Seq
+and Vault join in their phases), and no Azure account or paid service is
+ever required to run locally — Stripe integration uses Test Mode, which
+is free to set up.
 
 ## Conventions
 
