@@ -12,6 +12,7 @@ using LoanProject.Infrastructure.Persistence;
 using LoanProject.Infrastructure.Persistence.Repositories;
 using LoanProject.Infrastructure.Reports;
 using LoanProject.Infrastructure.Secrets;
+using LoanProject.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 
@@ -66,6 +67,7 @@ builder.Services.AddSingleton(provider =>
     provider.GetRequiredService<IMongoClient>().GetDatabase("LoanProject"));
 builder.Services.AddScoped<IAuditLogWriter, MongoAuditLogWriter>();
 builder.Services.AddScoped<ILoanApplicationStore, MongoLoanApplicationStore>();
+builder.Services.AddScoped<RecordStripePaymentHandler>();
 
 var app = builder.Build();
 
@@ -80,5 +82,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Endpoint groups live in Api/Endpoints — Program.cs only composes.
+app.MapStripeWebhook();
 
 app.Run();

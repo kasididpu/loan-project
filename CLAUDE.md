@@ -32,6 +32,8 @@ All repository artifacts are **English only**: code, comments, XML docs, commit 
 ### Structure
 
 - Clean Architecture: `Domain` / `Application` / `Infrastructure` / `Api`. The final structure is proposed and justified in Phase 1 — dependencies always point inward; `Domain` has no external dependencies.
+- Folder principle: each layer groups by what varies in that layer — `Domain` by aggregate/business area, `Application` by use case, `Infrastructure` by external technology (Persistence, EventStore, Mongo, Secrets, …), `Api` by endpoint group.
+- Minimal APIs: endpoints live in `Api/Endpoints/` as extension-method groups (`MapXxx(this IEndpointRouteBuilder)`); `Program.cs` is a composition root only — no endpoint or business logic inline.
 
 ### C# Conventions
 
