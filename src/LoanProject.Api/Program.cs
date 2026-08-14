@@ -2,9 +2,11 @@ using LoanProject.Application;
 using LoanProject.Application.Customers;
 using LoanProject.Application.Loans;
 using LoanProject.Application.Payments;
+using LoanProject.Application.Reports;
 using LoanProject.Infrastructure.EventStore;
 using LoanProject.Infrastructure.Persistence;
 using LoanProject.Infrastructure.Persistence.Repositories;
+using LoanProject.Infrastructure.Reports;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,6 +22,7 @@ builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 // The unit of work is the DbContext itself — same scoped instance, second door.
 builder.Services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<LoanDbContext>());
+builder.Services.AddScoped<IEndOfDaySummaryQuery>(_ => new EndOfDaySummaryQuery(connectionString));
 builder.Services.AddScoped<DevDataSeeder>();
 
 var app = builder.Build();
