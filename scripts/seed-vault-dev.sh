@@ -19,11 +19,13 @@ docker exec \
   loan-vault \
   sh -c 'vault kv patch secret/loan-api \
     LoanDb="Server=localhost,1433;Database=LoanDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
+    LoanReadDb="Server=localhost,1433;Database=LoanReadDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
     Mongo="mongodb://root:LoanDevMongo1@localhost:27017" \
     RabbitMq="amqp://guest:guest@localhost:5672" \
     Redis="localhost:6379" \
   || vault kv put secret/loan-api \
     LoanDb="Server=localhost,1433;Database=LoanDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
+    LoanReadDb="Server=localhost,1433;Database=LoanReadDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
     Mongo="mongodb://root:LoanDevMongo1@localhost:27017" \
     RabbitMq="amqp://guest:guest@localhost:5672" \
     Redis="localhost:6379"'
