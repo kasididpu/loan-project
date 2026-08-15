@@ -36,3 +36,8 @@ docs/
 *.pfx
 *.key
 appsettings.*.Local.json
+
+# Local Stripe TEST-MODE keys used to auto-restore the in-memory dev Vault after
+# a container restart (see scripts/vault-secrets.local.env.example). The .example
+# template is committed; the real filled-in copy never is.
+scripts/vault-secrets.local.env

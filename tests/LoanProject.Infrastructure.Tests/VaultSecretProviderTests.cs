@@ -45,4 +45,19 @@ public class VaultSecretProviderTests
         await Assert.ThrowsAsync<KeyNotFoundException>(
             () => provider.GetSecretAsync("Missing", CancellationToken.None));
     }
+
+    [Fact]
+    public async Task GetSecretAsync_MissingPath_ThrowsKeyNotFoundNotVaultApiException()
+    {
+        // A path that was never written: Vault answers 404 for the whole
+        // document, exactly like a dev Vault wiped by a container restart. The
+        // provider must surface the actionable KeyNotFoundException, not the
+        // opaque VaultApiException ({"errors":[]}) it would raise by default.
+        var basePath = $"it-missing-{Guid.NewGuid():N}";
+
+        var provider = new VaultSecretProvider(Address, Token, basePath: basePath);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => provider.GetSecretAsync("Anything", CancellationToken.None));
+    }
 }
