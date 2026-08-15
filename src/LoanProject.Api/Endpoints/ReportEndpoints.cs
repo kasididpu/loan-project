@@ -5,11 +5,17 @@ namespace LoanProject.Api.Endpoints;
 /// <summary>
 /// Reporting endpoints (phase 6) for operations/risk, all served from the Read
 /// DB. "now" is resolved here and passed down so the reports run against a
-/// single, testable clock reading.
+/// single, testable clock reading. These expose portfolio-level data and will be
+/// restricted to back-office roles once auth arrives in Phase 8.
 /// </summary>
 public static class ReportEndpoints
 {
     private const int DefaultCollectionsWindowDays = 30;
+
+    // Upper bound on the requested window: untrusted input, so cap it here (the
+    // trust boundary) to keep a huge value from turning the day-by-day report
+    // into a CPU/memory sink. One year is well past any real reporting need.
+    private const int MaxCollectionsWindowDays = 366;
 
     public static IEndpointRouteBuilder MapReports(this IEndpointRouteBuilder app)
     {
@@ -29,8 +35,9 @@ public static class ReportEndpoints
         int? windowDays, IDailyCollectionsQuery query, CancellationToken cancellationToken)
     {
         var window = windowDays ?? DefaultCollectionsWindowDays;
-        if (window <= 0)
-            return Results.BadRequest(new { error = "windowDays must be positive." });
+        if (window < 1 || window > MaxCollectionsWindowDays)
+            return Results.BadRequest(
+                new { error = $"windowDays must be between 1 and {MaxCollectionsWindowDays}." });
 
         var rows = await query.GetAsync(DateTime.UtcNow, window, cancellationToken);
         return Results.Ok(rows);

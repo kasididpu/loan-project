@@ -14,6 +14,12 @@ public static class DailyCollectionsMath
     public static IReadOnlyList<DailyCollectionRow> Compute(
         IReadOnlyCollection<InstallmentReadModel> installments, DateTime nowUtc, int windowDays)
     {
+        // Defensive lower bound: the endpoint already caps untrusted input, but
+        // this is also reachable from tests/internal code, so guard the loop
+        // bound at the single computation point too.
+        if (windowDays < 1)
+            throw new ArgumentOutOfRangeException(nameof(windowDays), windowDays, "Window must be at least one day.");
+
         var today = DateOnly.FromDateTime(nowUtc.Date);
         var fromDate = today.AddDays(-(windowDays - 1));
 

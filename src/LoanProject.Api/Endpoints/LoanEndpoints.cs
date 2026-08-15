@@ -8,6 +8,10 @@ namespace LoanProject.Api.Endpoints;
 /// store (write side); GET reads the eventually-consistent Read DB. The split is
 /// the whole point of CQRS: a write and its read are not guaranteed visible in
 /// the same instant.
+/// No authentication yet — by roadmap design the whole app is unauthenticated
+/// until Phase 8, which adds auth, derives the officer identity for approve/reject
+/// from claims (dropping ApprovedBy/RejectedBy from the request bodies), and
+/// scopes GET /loans/{id} to the caller instead of returning any loan by id.
 /// </summary>
 public static class LoanEndpoints
 {

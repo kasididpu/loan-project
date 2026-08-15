@@ -93,4 +93,13 @@ public class DailyCollectionsMathTests
         // 100 / 300 = 33.333... -> 33.33
         Assert.Equal(33.33m, Assert.Single(rows).CollectionRatePercent);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void Compute_NonPositiveWindow_Throws(int windowDays)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => DailyCollectionsMath.Compute(Array.Empty<InstallmentReadModel>(), Now, windowDays));
+    }
 }
