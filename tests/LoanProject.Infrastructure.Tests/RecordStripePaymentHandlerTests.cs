@@ -25,11 +25,26 @@ public class RecordStripePaymentHandlerTests
         return loan;
     }
 
-    private static (RecordStripePaymentHandler Handler, LoanDbContext Context) CreateHandler(
-        LoanEventStoreRepository loanRepository)
+    private static (RecordStripePaymentHandler Handler, LoanDbContext Context, RecordingNotifier Notifier)
+        CreateHandler(LoanEventStoreRepository loanRepository)
     {
         var context = TestDatabase.CreateContext();
-        return (new RecordStripePaymentHandler(loanRepository, new PaymentRepository(context), context), context);
+        var notifier = new RecordingNotifier();
+        return (
+            new RecordStripePaymentHandler(loanRepository, new PaymentRepository(context), context, notifier),
+            context,
+            notifier);
+    }
+
+    private sealed class RecordingNotifier : IPaymentNotifier
+    {
+        public List<PaymentReceivedNotice> Notices { get; } = [];
+
+        public Task NotifyPaymentReceivedAsync(PaymentReceivedNotice notice, CancellationToken cancellationToken)
+        {
+            Notices.Add(notice);
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]
@@ -38,7 +53,7 @@ public class RecordStripePaymentHandlerTests
         var loanRepository = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         var loan = await PersistActiveLoanAsync(loanRepository);
         var stripeEventId = $"evt_wh_{Guid.NewGuid():N}";
-        var (handler, context) = CreateHandler(loanRepository);
+        var (handler, context, notifier) = CreateHandler(loanRepository);
         await using var _ = context;
 
         await handler.HandleAsync(
@@ -53,6 +68,9 @@ public class RecordStripePaymentHandlerTests
             .FindByStripeEventIdAsync(stripeEventId, CancellationToken.None);
         Assert.NotNull(row);
         Assert.Equal(loan.Schedule![0].Payment, row!.Amount);
+        // Notification goes out once, after both stores hold the payment.
+        var notice = Assert.Single(notifier.Notices);
+        Assert.Equal(stripeEventId, notice.StripeEventId);
     }
 
     [Fact]
@@ -64,13 +82,14 @@ public class RecordStripePaymentHandlerTests
         var notification = new StripePaymentNotification(
             loan.Id, 1, loan.Schedule![0].Payment, stripeEventId, Now);
 
-        var (firstHandler, firstContext) = CreateHandler(loanRepository);
+        var (firstHandler, firstContext, _) = CreateHandler(loanRepository);
         await using (firstContext)
             await firstHandler.HandleAsync(notification, CancellationToken.None);
         // Stripe delivers at-least-once — the second delivery must be a no-op.
-        var (secondHandler, secondContext) = CreateHandler(loanRepository);
+        var (secondHandler, secondContext, secondNotifier) = CreateHandler(loanRepository);
         await using (secondContext)
             await secondHandler.HandleAsync(notification, CancellationToken.None);
+        Assert.Empty(secondNotifier.Notices); // already processed: no repeat notification
 
         var reloaded = await loanRepository.LoadAsync(loan.Id, CancellationToken.None);
         Assert.Equal(4, reloaded!.Version); // exactly one PaymentReceived event
@@ -81,7 +100,7 @@ public class RecordStripePaymentHandlerTests
     {
         var loanRepository = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         var loan = await PersistActiveLoanAsync(loanRepository);
-        var (handler, context) = CreateHandler(loanRepository);
+        var (handler, context, notifier) = CreateHandler(loanRepository);
         await using var _ = context;
 
         // Exact-amount policy: a verified Stripe event still cannot collect
@@ -92,5 +111,6 @@ public class RecordStripePaymentHandlerTests
 
         var reloaded = await loanRepository.LoadAsync(loan.Id, CancellationToken.None);
         Assert.Equal(3, reloaded!.Version); // nothing was appended
+        Assert.Empty(notifier.Notices);     // and no customer was told otherwise
     }
 }

@@ -4,17 +4,27 @@ using LoanProject.Application.Customers;
 using LoanProject.Application.LoanApplications;
 using LoanProject.Application.Loans;
 using LoanProject.Application.Payments;
+using LoanProject.Application.Rates;
+using LoanProject.Application.Reconciliation;
 using LoanProject.Application.Reports;
 using LoanProject.Application.Secrets;
+using LoanProject.Application.Settlement;
 using LoanProject.Infrastructure.EventStore;
+using LoanProject.Infrastructure.Jobs;
+using LoanProject.Infrastructure.Messaging;
 using LoanProject.Infrastructure.Mongo;
 using LoanProject.Infrastructure.Persistence;
 using LoanProject.Infrastructure.Persistence.Repositories;
+using LoanProject.Infrastructure.Rates;
 using LoanProject.Infrastructure.Reports;
 using LoanProject.Infrastructure.Secrets;
+using LoanProject.Infrastructure.Streaming;
+using LoanProject.Infrastructure.Stripe;
 using LoanProject.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
+using Quartz;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +38,10 @@ var connectionString = builder.Configuration.GetConnectionString("LoanDb")
     ?? throw new InvalidOperationException("Connection string 'LoanDb' is not configured.");
 var mongoConnectionString = builder.Configuration.GetConnectionString("Mongo")
     ?? throw new InvalidOperationException("Connection string 'Mongo' is not configured.");
+var rabbitConnectionString = builder.Configuration.GetConnectionString("RabbitMq")
+    ?? throw new InvalidOperationException("Connection string 'RabbitMq' is not configured.");
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
+    ?? throw new InvalidOperationException("Connection string 'Redis' is not configured.");
 
 var vaultAddress = builder.Configuration["Vault:Address"];
 if (!string.IsNullOrWhiteSpace(vaultAddress))
@@ -41,6 +55,8 @@ if (!string.IsNullOrWhiteSpace(vaultAddress))
     {
         connectionString = await secretProvider.GetSecretAsync("LoanDb", CancellationToken.None);
         mongoConnectionString = await secretProvider.GetSecretAsync("Mongo", CancellationToken.None);
+        rabbitConnectionString = await secretProvider.GetSecretAsync("RabbitMq", CancellationToken.None);
+        redisConnectionString = await secretProvider.GetSecretAsync("Redis", CancellationToken.None);
     }
     catch (Exception exception) when (builder.Environment.IsDevelopment())
     {
@@ -69,6 +85,66 @@ builder.Services.AddScoped<IAuditLogWriter, MongoAuditLogWriter>();
 builder.Services.AddScoped<ILoanApplicationStore, MongoLoanApplicationStore>();
 builder.Services.AddScoped<RecordStripePaymentHandler>();
 
+// --- Phase 5: async pipeline ---
+
+// Event dispatcher: ledger -> Redpanda, single active instance.
+var redpandaBootstrap = builder.Configuration["Redpanda:BootstrapServers"]
+    ?? throw new InvalidOperationException("Redpanda:BootstrapServers is not configured.");
+builder.Services.AddSingleton<IEventStoreReader>(_ => new EventStoreReader(connectionString));
+builder.Services.AddSingleton<IDispatcherCursorStore>(_ => new DispatcherCursorStore(connectionString));
+builder.Services.AddSingleton<ILoanEventPublisher>(provider => new RedpandaLoanEventPublisher(
+    redpandaBootstrap,
+    RedpandaLoanEventPublisher.DefaultTopic,
+    provider.GetRequiredService<ILogger<RedpandaLoanEventPublisher>>()));
+builder.Services.AddHostedService<EventDispatcher>();
+
+// Payment notifications over RabbitMQ: best-effort publisher + deduping consumer.
+builder.Services.AddSingleton<IPaymentNotifier>(provider => new RabbitMqPaymentNotifier(
+    rabbitConnectionString,
+    RabbitMqPaymentNotifier.DefaultQueueName,
+    provider.GetRequiredService<ILogger<RabbitMqPaymentNotifier>>()));
+builder.Services.AddSingleton<PaymentNotificationDeduplicator>();
+builder.Services.AddHostedService(provider => new PaymentNotificationConsumer(
+    rabbitConnectionString,
+    RabbitMqPaymentNotifier.DefaultQueueName,
+    provider.GetRequiredService<PaymentNotificationDeduplicator>(),
+    provider.GetRequiredService<ILogger<PaymentNotificationConsumer>>()));
+
+// Rate lookup behind a Redis cache-aside decorator. AbortOnConnectFail off:
+// the app must boot (and serve rates from the source) even with Redis down.
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+redisOptions.AbortOnConnectFail = false;
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisOptions));
+builder.Services.AddSingleton<IInterestRateLookup>(provider => new RedisRateCache(
+    provider.GetRequiredService<IConnectionMultiplexer>(),
+    new StaticRateSheet(),
+    provider.GetRequiredService<ILogger<RedisRateCache>>()));
+
+// Scheduled jobs run in the app (Quartz), not the database: Azure SQL
+// Database has no SQL Agent, so this keeps the optional cloud path viable.
+builder.Services.AddScoped<IStripeEventSource, StripeEventSource>();
+builder.Services.AddScoped<ReconcileStripePaymentsHandler>();
+builder.Services.AddScoped<SettleEndOfDayHandler>();
+var reconciliationCron = builder.Configuration["Jobs:ReconciliationCron"] ?? "0 0/30 * * * ?";
+var settlementCron = builder.Configuration["Jobs:SettlementCron"] ?? "0 59 23 * * ?";
+builder.Services.AddQuartz(quartz =>
+{
+    var reconciliationKey = new JobKey(nameof(ReconciliationJob));
+    quartz.AddJob<ReconciliationJob>(job => job.WithIdentity(reconciliationKey));
+    quartz.AddTrigger(trigger => trigger
+        .ForJob(reconciliationKey)
+        .WithIdentity($"{nameof(ReconciliationJob)}Trigger")
+        .WithCronSchedule(reconciliationCron));
+
+    var settlementKey = new JobKey(nameof(SettlementJob));
+    quartz.AddJob<SettlementJob>(job => job.WithIdentity(settlementKey));
+    quartz.AddTrigger(trigger => trigger
+        .ForJob(settlementKey)
+        .WithIdentity($"{nameof(SettlementJob)}Trigger")
+        .WithCronSchedule(settlementCron));
+});
+builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -85,5 +161,6 @@ app.UseHttpsRedirection();
 
 // Endpoint groups live in Api/Endpoints — Program.cs only composes.
 app.MapStripeWebhook();
+app.MapRates();
 
 app.Run();
