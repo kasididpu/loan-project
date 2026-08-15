@@ -28,6 +28,7 @@ public class LoanSnapshotTests
         var snapshot = loan.ToSnapshot();
 
         Assert.Equal(loan.Id, snapshot.Id);
+        Assert.Equal(loan.CustomerId, snapshot.CustomerId);
         Assert.Equal(loan.Status, snapshot.Status);
         Assert.Equal(loan.Principal, snapshot.Principal);
         Assert.Equal(loan.AnnualRate, snapshot.AnnualRate);
@@ -47,6 +48,7 @@ public class LoanSnapshotTests
         var restored = Loan.FromSnapshot(original.ToSnapshot(), []);
 
         Assert.Equal(original.Id, restored.Id);
+        Assert.Equal(original.CustomerId, restored.CustomerId);
         Assert.Equal(original.Status, restored.Status);
         Assert.Equal(original.OutstandingBalance, restored.OutstandingBalance);
         Assert.Equal(original.NextInstallmentNo, restored.NextInstallmentNo);

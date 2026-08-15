@@ -9,6 +9,7 @@ namespace LoanProject.Domain.Loans;
 /// </summary>
 public sealed record LoanSnapshotState(
     Guid Id,
+    Guid CustomerId,
     LoanStatus Status,
     decimal Principal,
     decimal AnnualRate,

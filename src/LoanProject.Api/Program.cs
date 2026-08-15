@@ -169,6 +169,9 @@ builder.Services.AddScoped<ApproveLoanHandler>();
 builder.Services.AddScoped<DisburseLoanHandler>();
 builder.Services.AddScoped<RejectLoanHandler>();
 
+// Phase 7: KYC compliance action.
+builder.Services.AddScoped<SetKycStatusHandler>();
+
 // Query side reads only the Read DB.
 builder.Services.AddScoped<ILoanStatusQuery, LoanStatusQuery>();
 builder.Services.AddScoped<IPortfolioSummaryQuery, PortfolioSummaryQuery>();
@@ -210,5 +213,6 @@ app.MapStripeWebhook();
 app.MapRates();
 app.MapLoans();
 app.MapReports();
+app.MapCustomers();
 
 app.Run();

@@ -25,5 +25,14 @@ internal sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         // discovers properties with a setter), so every immutable property
         // must be mapped explicitly or constructor binding fails.
         builder.Property(c => c.CreatedAtUtc);
+
+        // KYC status (phase 7) stored as its name, not a number — readable in the
+        // DB and consistent with the string-enum convention used elsewhere. A
+        // server default of "Pending" lets the column be added to a table that
+        // already has customer rows (and matches the domain's own default).
+        builder.Property(c => c.KycStatus)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(KycStatus.Pending);
     }
 }

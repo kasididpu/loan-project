@@ -1,3 +1,4 @@
+using LoanProject.Application.Customers;
 using LoanProject.Application.Loans;
 using LoanProject.Domain.Loans;
 
@@ -59,8 +60,8 @@ public static class LoanEndpoints
         return view is null ? Results.NotFound() : Results.Ok(view);
     }
 
-    // All command transitions share the same failure mapping: an unknown loan is
-    // 404, a concurrent change or illegal state change is 409, a bad argument 400.
+    // All command transitions share the same failure mapping: unknown loan 404,
+    // concurrent/illegal state change 409, a failed KYC gate 422, bad argument 400.
     private static async Task<IResult> RunTransitionAsync(Func<Task> transition)
     {
         try
@@ -79,6 +80,11 @@ public static class LoanEndpoints
         catch (InvalidLoanTransitionException exception)
         {
             return Results.Conflict(new { error = exception.Message });
+        }
+        catch (KycNotVerifiedException exception)
+        {
+            // Valid request, but a business precondition is unmet → 422, not 409.
+            return Results.UnprocessableEntity(new { error = exception.Message });
         }
         catch (ArgumentException exception)
         {
