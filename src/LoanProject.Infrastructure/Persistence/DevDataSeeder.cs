@@ -61,7 +61,11 @@ public sealed class DevDataSeeder
 
     private async Task SeedCrudRowsAsync(CancellationToken cancellationToken)
     {
-        _dbContext.Customers.Add(new Customer(SeedCustomerWithLoanId, "Seed: Somsri Borrower", SeedDate));
+        // Somsri already has an active loan → KYC verified. Somchai is new and
+        // stays Pending, so the Phase 7 KYC gate can be demonstrated on him.
+        var somsri = new Customer(SeedCustomerWithLoanId, "Seed: Somsri Borrower", SeedDate);
+        somsri.SetKycStatus(KycStatus.Verified);
+        _dbContext.Customers.Add(somsri);
         _dbContext.Customers.Add(new Customer(SeedCustomerNewId, "Seed: Somchai Newcomer", SeedDate));
 
         // The CRUD record of the payment the ledger already knows — same

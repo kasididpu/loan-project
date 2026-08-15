@@ -31,4 +31,22 @@ public class CustomerTests
     {
         Assert.Throws<ArgumentException>(() => new Customer(Guid.NewGuid(), fullName, Now));
     }
+
+    [Fact]
+    public void NewCustomer_StartsKycPending()
+    {
+        var customer = new Customer(Guid.NewGuid(), "Somchai Jaidee", Now);
+
+        Assert.Equal(KycStatus.Pending, customer.KycStatus);
+    }
+
+    [Fact]
+    public void SetKycStatus_ChangesStatus()
+    {
+        var customer = new Customer(Guid.NewGuid(), "Somchai Jaidee", Now);
+
+        customer.SetKycStatus(KycStatus.Verified);
+
+        Assert.Equal(KycStatus.Verified, customer.KycStatus);
+    }
 }

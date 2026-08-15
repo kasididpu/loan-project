@@ -13,6 +13,11 @@ public sealed class Loan
     private readonly List<IDomainEvent> _uncommittedEvents = new();
 
     public Guid Id { get; private set; }
+
+    /// <summary>Who the loan belongs to — carried by LoanOriginated. Needed by
+    /// cross-aggregate rules (e.g. the KYC check the approve handler runs).</summary>
+    public Guid CustomerId { get; private set; }
+
     public LoanStatus Status { get; private set; }
     public decimal Principal { get; private set; }
     public decimal AnnualRate { get; private set; }
@@ -131,7 +136,7 @@ public sealed class Loan
 
     /// <summary>Captures every non-derived field for the snapshot table.</summary>
     public LoanSnapshotState ToSnapshot() => new(
-        Id, Status, Principal, AnnualRate, RateType, TermMonths,
+        Id, CustomerId, Status, Principal, AnnualRate, RateType, TermMonths,
         OutstandingBalance, NextInstallmentNo, Version);
 
     /// <summary>
@@ -144,6 +149,7 @@ public sealed class Loan
         var loan = new Loan
         {
             Id = snapshot.Id,
+            CustomerId = snapshot.CustomerId,
             Status = snapshot.Status,
             Principal = snapshot.Principal,
             AnnualRate = snapshot.AnnualRate,
@@ -191,6 +197,7 @@ public sealed class Loan
         {
             case LoanOriginated e:
                 Id = e.LoanId;
+                CustomerId = e.CustomerId;
                 Principal = e.Principal;
                 AnnualRate = e.AnnualRate;
                 RateType = e.RateType;
