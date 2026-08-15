@@ -14,8 +14,23 @@ internal static class TestDatabase
         Environment.GetEnvironmentVariable("ConnectionStrings__LoanDb")
         ?? "Server=localhost,1433;Database=LoanDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True";
 
+    // Migrate once per run (idempotent), same treatment as TestReadDatabase — so a
+    // fresh clone can `dotnet test` without a separate `dotnet ef database update`.
+    private static readonly Lazy<bool> Migrated = new(() =>
+    {
+        using var context = NewContext();
+        context.Database.Migrate();
+        return true;
+    });
+
     /// <summary>Fresh context per call — tests use separate contexts for write and read-back.</summary>
     public static LoanDbContext CreateContext()
+    {
+        _ = Migrated.Value; // ensure the schema exists once per run
+        return NewContext();
+    }
+
+    private static LoanDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<LoanDbContext>()
             .UseSqlServer(ConnectionString)
