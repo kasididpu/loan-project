@@ -16,6 +16,7 @@ using LoanProject.Infrastructure.Mongo;
 using LoanProject.Infrastructure.Persistence;
 using LoanProject.Infrastructure.Persistence.Repositories;
 using LoanProject.Infrastructure.Rates;
+using LoanProject.Infrastructure.ReadModel;
 using LoanProject.Infrastructure.Reports;
 using LoanProject.Infrastructure.Secrets;
 using LoanProject.Infrastructure.Streaming;
@@ -42,6 +43,8 @@ var rabbitConnectionString = builder.Configuration.GetConnectionString("RabbitMq
     ?? throw new InvalidOperationException("Connection string 'RabbitMq' is not configured.");
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("Connection string 'Redis' is not configured.");
+var readConnectionString = builder.Configuration.GetConnectionString("LoanReadDb")
+    ?? throw new InvalidOperationException("Connection string 'LoanReadDb' is not configured.");
 
 var vaultAddress = builder.Configuration["Vault:Address"];
 if (!string.IsNullOrWhiteSpace(vaultAddress))
@@ -54,6 +57,7 @@ if (!string.IsNullOrWhiteSpace(vaultAddress))
     try
     {
         connectionString = await secretProvider.GetSecretAsync("LoanDb", CancellationToken.None);
+        readConnectionString = await secretProvider.GetSecretAsync("LoanReadDb", CancellationToken.None);
         mongoConnectionString = await secretProvider.GetSecretAsync("Mongo", CancellationToken.None);
         rabbitConnectionString = await secretProvider.GetSecretAsync("RabbitMq", CancellationToken.None);
         redisConnectionString = await secretProvider.GetSecretAsync("Redis", CancellationToken.None);
@@ -145,6 +149,33 @@ builder.Services.AddQuartz(quartz =>
 });
 builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
 
+// --- Phase 6: CQRS read side ---
+
+// Read database: a physically separate database, synced only by projecting
+// loan-events (never a cross-database query — Azure SQL Database has none).
+builder.Services.AddDbContext<ReadDbContext>(options => options.UseSqlServer(readConnectionString));
+
+// Command handlers append to the event store (write side); the dispatcher
+// publishes, so these never touch Redpanda or the read side directly.
+builder.Services.AddScoped<OriginateLoanHandler>();
+builder.Services.AddScoped<ApproveLoanHandler>();
+builder.Services.AddScoped<DisburseLoanHandler>();
+builder.Services.AddScoped<RejectLoanHandler>();
+
+// Query side reads only the Read DB.
+builder.Services.AddScoped<ILoanStatusQuery, LoanStatusQuery>();
+builder.Services.AddScoped<IPortfolioSummaryQuery, PortfolioSummaryQuery>();
+builder.Services.AddScoped<IDailyCollectionsQuery, DailyCollectionsQuery>();
+
+// Projector: single consumer draining loan-events into the Read DB. A fresh
+// scoped projection (and ReadDbContext) per message, same lifetime as a request.
+builder.Services.AddScoped<LoanReadModelProjection>();
+builder.Services.AddHostedService(provider => new LoanReadModelProjector(
+    redpandaBootstrap,
+    RedpandaLoanEventPublisher.DefaultTopic,
+    provider.GetRequiredService<IServiceScopeFactory>(),
+    provider.GetRequiredService<ILogger<LoanReadModelProjector>>()));
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -154,6 +185,11 @@ if (app.Environment.IsDevelopment())
 
     // Sample data for local exploration only — real environments are never seeded.
     using var scope = app.Services.CreateScope();
+
+    // Create/migrate the Read DB on boot in dev so the projector has its tables
+    // immediately; the write DB is migrated out of band via `dotnet ef`.
+    await scope.ServiceProvider.GetRequiredService<ReadDbContext>().Database.MigrateAsync();
+
     await scope.ServiceProvider.GetRequiredService<DevDataSeeder>().SeedAsync(CancellationToken.None);
 }
 
@@ -162,5 +198,7 @@ app.UseHttpsRedirection();
 // Endpoint groups live in Api/Endpoints — Program.cs only composes.
 app.MapStripeWebhook();
 app.MapRates();
+app.MapLoans();
+app.MapReports();
 
 app.Run();
