@@ -8,9 +8,9 @@ A mini loan management API built around financial-services backend patterns: amo
 
 - [x] Phase 1 — Domain & core logic (amortization, interest, event-sourced `Loan` + state machine)
 - [x] Phase 2 — Data layer (EF Core, event store, stored procedures, MongoDB)
-- [ ] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
-- [ ] Phase 4 — Stripe payment integration (Test Mode)
-- [ ] Phase 5 — Async processing, event dispatcher, reconciliation/settlement
+- [x] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
+- [x] Phase 4 — Stripe payment integration (Test Mode)
+- [x] Phase 5 — Async processing, event dispatcher, reconciliation/settlement
 - [ ] Phase 6 — CQRS write/read databases + reporting
 - [ ] Phase 7 — KYC/AML rules
 - [ ] Phase 8 — Auth, authorization & data protection
@@ -47,7 +47,7 @@ Requires Docker Desktop and the .NET 8 SDK.
 
 ```bash
 git clone <this repo> && cd loan-project
-docker compose up -d      # SQL Server 2022 + MongoDB 8 + Vault dev mode (more join in later phases)
+docker compose up -d      # SQL Server 2022 + MongoDB 8 + Vault + Redpanda + RabbitMQ + Redis
 sh scripts/seed-vault-dev.sh   # put the local dev secrets into Vault (idempotent)
 
 dotnet tool install --global dotnet-ef
@@ -66,6 +66,37 @@ compose up` starts every backing service (Redis, RabbitMQ, Redpanda, Seq
 and Vault join in their phases), and no Azure account or paid service is
 ever required to run locally — Stripe integration uses Test Mode, which
 is free to set up.
+
+## Async Pipeline (Phase 5)
+
+The event store doubles as the outbox: an `EventDispatcher` background
+service reads ledger rows past a persisted cursor, publishes them to the
+Redpanda topic `loan-events` (key = aggregate id, so each loan's events
+keep their order), and advances the cursor only after the broker
+acknowledges. A crash or broker outage between those steps means
+re-publish, never loss — delivery is at-least-once and consumers dedupe
+by `(AggregateId, Version)`. Payment notifications ride RabbitMQ as a
+classic work queue; interest-rate lookups sit behind a Redis cache-aside
+decorator that degrades to the slow source when Redis is down.
+
+### Reconciliation vs Settlement
+
+Two scheduled Quartz jobs that are deliberately not the same job, with
+separate logs and separate audit entries:
+
+- **Reconciliation** (`ReconciliationJob`) compares two independent
+  records of the same money — our `Payment` table against Stripe's event
+  feed — and **flags** discrepancies to the audit log. It moves nothing
+  and fixes nothing: a missing payment means a lost webhook delivery,
+  and writing money records stays the webhook path's job alone.
+- **Settlement** (`SettlementJob`) acts on our own totals — it
+  aggregates the day's collections (via the end-of-day stored procedure)
+  and **moves** the money to the settlement account, here simulated by
+  the audit record of the transfer. No external comparison is involved.
+
+In short: reconciliation is a *check* between two books; settlement is an
+*action* on our own book. Both run inside the app on Quartz because the
+optional cloud target (Azure SQL Database) has no SQL Agent.
 
 ## Conventions
 

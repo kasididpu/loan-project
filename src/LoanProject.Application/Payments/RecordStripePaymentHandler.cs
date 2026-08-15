@@ -12,7 +12,8 @@ namespace LoanProject.Application.Payments;
 public sealed class RecordStripePaymentHandler(
     ILoanRepository loanRepository,
     IPaymentRepository paymentRepository,
-    IUnitOfWork unitOfWork)
+    IUnitOfWork unitOfWork,
+    IPaymentNotifier paymentNotifier)
 {
     public async Task HandleAsync(StripePaymentNotification notification, CancellationToken cancellationToken)
     {
@@ -34,6 +35,10 @@ public sealed class RecordStripePaymentHandler(
                 Guid.NewGuid(), notification.LoanId, notification.Amount,
                 notification.StripeEventId, notification.OccurredAtUtc));
             await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // Re-notifying here is safe: delivery is at-least-once and the
+            // consumer dedupes by StripeEventId.
+            await NotifyAsync(notification, cancellationToken);
             return;
         }
 
@@ -53,5 +58,18 @@ public sealed class RecordStripePaymentHandler(
             paymentId, notification.LoanId, notification.Amount,
             notification.StripeEventId, notification.OccurredAtUtc));
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Only after both stores hold the payment: a notification must never
+        // announce money the ledger does not have.
+        await NotifyAsync(notification, cancellationToken);
     }
+
+    private Task NotifyAsync(StripePaymentNotification notification, CancellationToken cancellationToken) =>
+        // Best-effort by the port's contract: a broker outage is logged by
+        // the implementation and never fails the webhook.
+        paymentNotifier.NotifyPaymentReceivedAsync(
+            new PaymentReceivedNotice(
+                notification.LoanId, notification.InstallmentNo, notification.Amount,
+                notification.StripeEventId, notification.OccurredAtUtc),
+            cancellationToken);
 }
