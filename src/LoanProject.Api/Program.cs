@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using LoanProject.Application;
 using LoanProject.Application.Audit;
 using LoanProject.Application.Customers;
@@ -31,6 +32,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Serialize and accept enums as their names (e.g. "Effective") instead of magic
+// numbers — a cleaner API contract, and consistent with the event store which
+// already stores enums as strings.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 // Secrets come from Vault through ISecretProvider (phase 3.5). The
 // appsettings values are non-secret local defaults, kept only as the
@@ -186,8 +193,11 @@ if (app.Environment.IsDevelopment())
     // Sample data for local exploration only — real environments are never seeded.
     using var scope = app.Services.CreateScope();
 
-    // Create/migrate the Read DB on boot in dev so the projector has its tables
-    // immediately; the write DB is migrated out of band via `dotnet ef`.
+    // Create/migrate both databases on boot in dev so the app is ready without a
+    // manual `dotnet ef database update` — same treatment for Write and Read.
+    // Prod stays deliberate: this whole block is dev-only. Write DB first, since
+    // the seeder and event store need its tables.
+    await scope.ServiceProvider.GetRequiredService<LoanDbContext>().Database.MigrateAsync();
     await scope.ServiceProvider.GetRequiredService<ReadDbContext>().Database.MigrateAsync();
 
     await scope.ServiceProvider.GetRequiredService<DevDataSeeder>().SeedAsync(CancellationToken.None);
