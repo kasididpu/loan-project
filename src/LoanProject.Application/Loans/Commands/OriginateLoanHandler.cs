@@ -1,5 +1,6 @@
 using System.Globalization;
 using LoanProject.Application.Audit;
+using LoanProject.Application.Auth;
 using LoanProject.Application.Rates;
 using LoanProject.Domain.Loans;
 
@@ -23,12 +24,15 @@ public sealed class OriginateLoanHandler
     private readonly ILoanRepository _loans;
     private readonly IInterestRateLookup _rates;
     private readonly IAuditLogWriter _audit;
+    private readonly ICurrentUser _currentUser;
 
-    public OriginateLoanHandler(ILoanRepository loans, IInterestRateLookup rates, IAuditLogWriter audit)
+    public OriginateLoanHandler(
+        ILoanRepository loans, IInterestRateLookup rates, IAuditLogWriter audit, ICurrentUser currentUser)
     {
         _loans = loans;
         _rates = rates;
         _audit = audit;
+        _currentUser = currentUser;
     }
 
     public async Task<Guid> HandleAsync(
@@ -36,30 +40,38 @@ public sealed class OriginateLoanHandler
     {
         var annualRate = await _rates.GetAnnualRateAsync(rateType, termMonths, cancellationToken);
 
+        // The originating officer is a verified identity; behind RequireAuthorization
+        // it is always present, so its absence is a misconfiguration.
+        var officerId = _currentUser.UserId
+            ?? throw new InvalidOperationException("Authenticated caller has no subject id.");
+
         var loanId = Guid.NewGuid();
         var loan = Loan.Originate(loanId, customerId, principal, annualRate, rateType, termMonths, DateTime.UtcNow);
         await _loans.SaveAsync(loan, cancellationToken);
 
         if (principal >= AmlReviewThresholdBaht)
-            await FlagForAmlReviewAsync(loanId, customerId, principal, cancellationToken);
+            await FlagForAmlReviewAsync(loanId, customerId, officerId, principal, cancellationToken);
 
         return loanId;
     }
 
     private Task FlagForAmlReviewAsync(
-        Guid loanId, Guid customerId, decimal principal, CancellationToken cancellationToken) =>
+        Guid loanId, Guid customerId, Guid originatedByUserId, decimal principal, CancellationToken cancellationToken) =>
         _audit.WriteAsync(
             new AuditEntry(
                 "Loan",
                 loanId.ToString(),
                 "AmlReviewFlagged",
-                "system",
+                // The officer who originated the loan — the accountable actor,
+                // taken from the authenticated identity (Phase 8), not "system".
+                _currentUser.Name,
                 DateTime.UtcNow,
                 // Money kept as invariant strings — the audit store (Mongo) has a
                 // decimal-BSON trap; same convention as the settlement job.
                 new Dictionary<string, object?>
                 {
                     ["customerId"] = customerId.ToString(),
+                    ["originatedByUserId"] = originatedByUserId.ToString(),
                     ["principal"] = principal.ToString(CultureInfo.InvariantCulture),
                     ["thresholdBaht"] = AmlReviewThresholdBaht.ToString(CultureInfo.InvariantCulture),
                     ["reason"] = "Principal at or above the AML review threshold.",

@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using LoanProject.Application;
 using LoanProject.Application.Audit;
+using LoanProject.Application.Auth;
 using LoanProject.Application.Customers;
 using LoanProject.Application.LoanApplications;
 using LoanProject.Application.Loans;
@@ -9,7 +10,10 @@ using LoanProject.Application.Rates;
 using LoanProject.Application.Reconciliation;
 using LoanProject.Application.Reports;
 using LoanProject.Application.Secrets;
+using LoanProject.Application.Security;
 using LoanProject.Application.Settlement;
+using LoanProject.Domain.Customers;
+using LoanProject.Infrastructure.Auth;
 using LoanProject.Infrastructure.EventStore;
 using LoanProject.Infrastructure.Jobs;
 using LoanProject.Infrastructure.Messaging;
@@ -20,12 +24,17 @@ using LoanProject.Infrastructure.Rates;
 using LoanProject.Infrastructure.ReadModel;
 using LoanProject.Infrastructure.Reports;
 using LoanProject.Infrastructure.Secrets;
+using LoanProject.Infrastructure.Security;
 using LoanProject.Infrastructure.Streaming;
 using LoanProject.Infrastructure.Stripe;
 using LoanProject.Api.Endpoints;
+using LoanProject.Api.Security;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using Quartz;
+using Serilog;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,6 +47,26 @@ builder.Services.AddSwaggerGen();
 // already stores enums as strings.
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+// Structured logging to Console + Seq (Phase 8). The destructuring policy masks
+// a Customer's PII whenever one is logged with {@Customer}, so a national id or
+// bank account never reaches the log sink even by accident.
+var seqServerUrl = builder.Configuration["Seq:ServerUrl"] ?? "http://localhost:5341";
+builder.Host.UseSerilog((context, configuration) => configuration
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Destructure.ByTransforming<Customer>(customer => new
+    {
+        customer.Id,
+        customer.FullName,
+        customer.KycStatus,
+        NationalId = SensitiveDataMasker.MaskTail(customer.NationalId),
+        BankAccountNumber = SensitiveDataMasker.MaskTail(customer.BankAccountNumber),
+        customer.CreatedAtUtc,
+    })
+    .WriteTo.Console()
+    .WriteTo.Seq(seqServerUrl));
 
 // Secrets come from Vault through ISecretProvider (phase 3.5). The
 // appsettings values are non-secret local defaults, kept only as the
@@ -52,6 +81,16 @@ var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("Connection string 'Redis' is not configured.");
 var readConnectionString = builder.Configuration.GetConnectionString("LoanReadDb")
     ?? throw new InvalidOperationException("Connection string 'LoanReadDb' is not configured.");
+
+// Auth + data-protection secrets (Phase 8): the JWT signing key, the PII
+// field-encryption key, and the dev seed credentials. Real environments read
+// them from Vault; dev falls back to fixed non-secret local values so the app
+// boots before the dev Vault is seeded — the same policy as the DB passwords.
+var jwtSigningKey = "loan-dev-jwt-signing-key-change-me-0123456789abcdef";
+var fieldEncryptionKey = "loan-dev-field-encryption-key-change-me";
+var devSeedUserPassword = "Dev!Passw0rd";
+var devOAuthClientSecret = "dev-oauth-client-secret-change-me";
+const string DevOAuthClientId = "loan-report-bot";
 
 var vaultAddress = builder.Configuration["Vault:Address"];
 if (!string.IsNullOrWhiteSpace(vaultAddress))
@@ -68,6 +107,10 @@ if (!string.IsNullOrWhiteSpace(vaultAddress))
         mongoConnectionString = await secretProvider.GetSecretAsync("Mongo", CancellationToken.None);
         rabbitConnectionString = await secretProvider.GetSecretAsync("RabbitMq", CancellationToken.None);
         redisConnectionString = await secretProvider.GetSecretAsync("Redis", CancellationToken.None);
+        jwtSigningKey = await secretProvider.GetSecretAsync("JwtSigningKey", CancellationToken.None);
+        fieldEncryptionKey = await secretProvider.GetSecretAsync("FieldEncryptionKey", CancellationToken.None);
+        devSeedUserPassword = await secretProvider.GetSecretAsync("DevSeedUserPassword", CancellationToken.None);
+        devOAuthClientSecret = await secretProvider.GetSecretAsync("DevOAuthClientSecret", CancellationToken.None);
     }
     catch (Exception exception) when (builder.Environment.IsDevelopment())
     {
@@ -77,6 +120,11 @@ if (!string.IsNullOrWhiteSpace(vaultAddress))
         Console.WriteLine($"WARN: Vault unavailable, using local dev defaults. ({exception.Message})");
     }
 }
+
+// PII field encryption (Phase 8). Registered before the DbContext because its
+// value converters resolve IFieldEncryptor from DI. Singleton: it derives a key
+// once and is thread-safe.
+builder.Services.AddSingleton<IFieldEncryptor>(new AesGcmFieldEncryptor(fieldEncryptionKey));
 
 builder.Services.AddDbContext<LoanDbContext>(options => options.UseSqlServer(connectionString));
 builder.Services.AddScoped<ILoanRepository>(_ => new LoanEventStoreRepository(connectionString));
@@ -186,6 +234,55 @@ builder.Services.AddHostedService(provider => new LoanReadModelProjector(
     provider.GetRequiredService<IServiceScopeFactory>(),
     provider.GetRequiredService<ILogger<LoanReadModelProjector>>()));
 
+// --- Phase 8: authentication, authorization & data protection ---
+
+// ASP.NET Core Identity provides the user/role store and password hashing.
+// AddIdentityCore (not AddIdentity) keeps it store-only — no cookie handler is
+// wired up, because this API authenticates with JWTs it issues itself.
+builder.Services
+    .AddIdentityCore<AppUser>(options => options.User.RequireUniqueEmail = false)
+    .AddRoles<IdentityRole<Guid>>()
+    .AddEntityFrameworkStores<LoanDbContext>();
+
+// JWT: signing key from Vault; issuer/audience/lifetimes from configuration.
+var jwtOptions = new JwtOptions(
+    Issuer: builder.Configuration["Jwt:Issuer"] ?? "loan-api",
+    Audience: builder.Configuration["Jwt:Audience"] ?? "loan-api-clients",
+    SigningKey: jwtSigningKey,
+    AccessTokenLifetime: TimeSpan.FromMinutes(builder.Configuration.GetValue("Jwt:AccessTokenMinutes", 60)),
+    MfaTokenLifetime: TimeSpan.FromMinutes(builder.Configuration.GetValue("Jwt:MfaTokenMinutes", 5)));
+var jwtTokenService = new JwtTokenService(jwtOptions);
+builder.Services.AddSingleton<IJwtTokenService>(jwtTokenService);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Read claims by their raw names (sub, role, customer_id) — no remapping
+        // to long ClaimTypes URIs, so authorization and ICurrentUser see exactly
+        // what the token service issued.
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = jwtTokenService.ValidationParameters();
+    });
+
+// One policy per endpoint group — the role-to-endpoint mapping lives only here.
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy(AuthPolicies.LoanOfficer, policy => policy.RequireRole(Roles.Admin, Roles.LoanOfficer))
+    .AddPolicy(AuthPolicies.Compliance, policy => policy.RequireRole(Roles.Admin, Roles.ComplianceOfficer))
+    // Staff roles + the System client (a reporting bot via client credentials).
+    .AddPolicy(AuthPolicies.BackOffice,
+        policy => policy.RequireRole(Roles.Admin, Roles.LoanOfficer, Roles.ComplianceOfficer, Roles.System));
+
+// Turns the request's validated claims into the ICurrentUser handlers depend on.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+
+// OTP store (Redis), customer onboarding handler, and the dev-only auth seeder.
+builder.Services.AddSingleton<IOtpStore>(provider =>
+    new RedisOtpStore(provider.GetRequiredService<IConnectionMultiplexer>()));
+builder.Services.AddScoped<CreateCustomerHandler>();
+builder.Services.AddScoped<AuthDataSeeder>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -204,11 +301,25 @@ if (app.Environment.IsDevelopment())
     await scope.ServiceProvider.GetRequiredService<ReadDbContext>().Database.MigrateAsync();
 
     await scope.ServiceProvider.GetRequiredService<DevDataSeeder>().SeedAsync(CancellationToken.None);
+
+    // Dev-only auth seed: roles, one demo user per role, and the OAuth client.
+    // Credentials come from Vault (dev fallback) — nothing is hard-coded here.
+    await scope.ServiceProvider.GetRequiredService<AuthDataSeeder>()
+        .SeedAsync(devSeedUserPassword, DevOAuthClientId, devOAuthClientSecret, CancellationToken.None);
 }
+
+// Structured request logging (method, path, status, elapsed) via Serilog.
+app.UseSerilogRequestLogging();
 
 app.UseHttpsRedirection();
 
+// Authentication must run before authorization, and both before the endpoints
+// whose policies they enforce.
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Endpoint groups live in Api/Endpoints — Program.cs only composes.
+app.MapAuth();
 app.MapStripeWebhook();
 app.MapRates();
 app.MapLoans();
@@ -216,3 +327,7 @@ app.MapReports();
 app.MapCustomers();
 
 app.Run();
+
+// Exposed as public so the integration test project can drive the app through
+// WebApplicationFactory<Program>; top-level statements otherwise emit it as internal.
+public partial class Program { }

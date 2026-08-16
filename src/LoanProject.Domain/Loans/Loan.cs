@@ -67,26 +67,29 @@ public sealed class Loan
         return loan;
     }
 
-    public void Approve(string approvedBy, DateTime utcNow)
+    // The acting officer is a required part of the command — you cannot approve a
+    // loan without recording who did it. The id (immutable audit reference) is
+    // paired with the display name, id first.
+    public void Approve(Guid approvedByUserId, string approvedBy, DateTime utcNow)
     {
         EnsureStatus(LoanStatus.Originated, "approve");
-        Raise(new LoanApproved(approvedBy, utcNow));
+        Raise(new LoanApproved(approvedByUserId, approvedBy, utcNow));
     }
 
-    public void Reject(string rejectedBy, string reason, DateTime utcNow)
+    public void Reject(Guid rejectedByUserId, string rejectedBy, string reason, DateTime utcNow)
     {
         EnsureStatus(LoanStatus.Originated, "reject");
-        Raise(new LoanRejected(rejectedBy, reason, utcNow));
+        Raise(new LoanRejected(rejectedByUserId, rejectedBy, reason, utcNow));
     }
 
-    public void Disburse(decimal amount, DateTime utcNow)
+    public void Disburse(decimal amount, Guid disbursedByUserId, string disbursedBy, DateTime utcNow)
     {
         EnsureStatus(LoanStatus.Approved, "disburse");
         // Slice 1 assumption: full single disbursement of exactly the principal.
         if (amount != Principal)
             throw new ArgumentOutOfRangeException(nameof(amount), amount, "Disbursed amount must equal the approved principal.");
 
-        Raise(new LoanDisbursed(amount, utcNow));
+        Raise(new LoanDisbursed(amount, disbursedByUserId, disbursedBy, utcNow));
     }
 
     public void ReceivePayment(Guid paymentId, decimal amount, int installmentNo, string stripeEventId, DateTime utcNow)

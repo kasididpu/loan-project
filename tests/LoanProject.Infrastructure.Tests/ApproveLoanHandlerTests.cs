@@ -42,8 +42,8 @@ public class ApproveLoanHandlerTests
         var loans = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         await using var db = TestDatabase.CreateContext();
 
-        await new ApproveLoanHandler(loans, new CustomerRepository(db))
-            .HandleAsync(loanId, "officer", CancellationToken.None);
+        await new ApproveLoanHandler(loans, new CustomerRepository(db), new FakeCurrentUser("officer"))
+            .HandleAsync(loanId, CancellationToken.None);
 
         var reloaded = await loans.LoadAsync(loanId, CancellationToken.None);
         Assert.Equal(LoanStatus.Approved, reloaded!.Status);
@@ -58,10 +58,10 @@ public class ApproveLoanHandlerTests
         var loanId = await OriginateLoanForAsync(customerId);
         var loans = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         await using var db = TestDatabase.CreateContext();
-        var handler = new ApproveLoanHandler(loans, new CustomerRepository(db));
+        var handler = new ApproveLoanHandler(loans, new CustomerRepository(db), new FakeCurrentUser("officer"));
 
         await Assert.ThrowsAsync<KycNotVerifiedException>(
-            () => handler.HandleAsync(loanId, "officer", CancellationToken.None));
+            () => handler.HandleAsync(loanId, CancellationToken.None));
 
         var reloaded = await loans.LoadAsync(loanId, CancellationToken.None);
         Assert.Equal(LoanStatus.Originated, reloaded!.Status); // gate blocked the approval

@@ -115,8 +115,24 @@ services:
       retries: 10
       start_period: 5s
 
+  seq:
+    # Structured-log server (phase 8): Serilog ships logs here. UI and ingestion
+    # share port 80 in the container; browse http://localhost:5341. Pinned to a
+    # version (not :latest) for reproducibility. Recent Seq forces a first-run auth
+    # choice — local dev opts out of authentication (single-user, no login).
+    image: datalust/seq:2026.1
+    container_name: loan-seq
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5341:80"
+    volumes:
+      - seq-data:/data
+
 volumes:
   sqlserver-data:
   mongodb-data:
   redpanda-data:
   rabbitmq-data:
+  seq-data:

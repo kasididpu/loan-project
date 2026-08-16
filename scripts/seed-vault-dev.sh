@@ -23,12 +23,20 @@ docker exec \
     Mongo="mongodb://root:LoanDevMongo1@localhost:27017" \
     RabbitMq="amqp://guest:guest@localhost:5672" \
     Redis="localhost:6379" \
+    JwtSigningKey="loan-dev-jwt-signing-key-change-me-0123456789abcdef" \
+    FieldEncryptionKey="loan-dev-field-encryption-key-change-me" \
+    DevSeedUserPassword="Dev!Passw0rd" \
+    DevOAuthClientSecret="dev-oauth-client-secret-change-me" \
   || vault kv put secret/loan-api \
     LoanDb="Server=localhost,1433;Database=LoanDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
     LoanReadDb="Server=localhost,1433;Database=LoanReadDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True" \
     Mongo="mongodb://root:LoanDevMongo1@localhost:27017" \
     RabbitMq="amqp://guest:guest@localhost:5672" \
-    Redis="localhost:6379"'
+    Redis="localhost:6379" \
+    JwtSigningKey="loan-dev-jwt-signing-key-change-me-0123456789abcdef" \
+    FieldEncryptionKey="loan-dev-field-encryption-key-change-me" \
+    DevSeedUserPassword="Dev!Passw0rd" \
+    DevOAuthClientSecret="dev-oauth-client-secret-change-me"'
 
 # Stripe keys — restored from the gitignored local file if present so they
 # survive dev Vault restarts. A missing file means "skip", not an error. The

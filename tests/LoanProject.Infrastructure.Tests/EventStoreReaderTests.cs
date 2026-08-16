@@ -28,8 +28,8 @@ public class EventStoreReaderTests
         var beforeAppend = await CurrentMaxSequenceAsync();
         var loanRepository = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), 100_000m, 0.12m, RateType.Effective, 12, Now);
-        loan.Approve("officer-1", Now);
-        loan.Disburse(100_000m, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(100_000m, Guid.NewGuid(), "officer", Now);
         await loanRepository.SaveAsync(loan, CancellationToken.None);
 
         var batch = await new EventStoreReader(TestDatabase.ConnectionString)
@@ -52,8 +52,8 @@ public class EventStoreReaderTests
         var beforeAppend = await CurrentMaxSequenceAsync();
         var loanRepository = new LoanEventStoreRepository(TestDatabase.ConnectionString);
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), 100_000m, 0.12m, RateType.Effective, 12, Now);
-        loan.Approve("officer-1", Now);
-        loan.Disburse(100_000m, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(100_000m, Guid.NewGuid(), "officer", Now);
         await loanRepository.SaveAsync(loan, CancellationToken.None);
 
         var batch = await new EventStoreReader(TestDatabase.ConnectionString)

@@ -21,8 +21,8 @@ public class LoanConcurrencyTests
     private static async Task<Guid> PersistActiveLoanAsync(LoanEventStoreRepository repository)
     {
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.12m, RateType.Effective, 12, Now);
-        loan.Approve("officer-1", Now);
-        loan.Disburse(Principal, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         await repository.SaveAsync(loan, CancellationToken.None);
         return loan.Id;
     }

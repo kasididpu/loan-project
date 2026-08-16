@@ -30,14 +30,14 @@ public class OriginateLoanHandlerTests
     }
 
     private static OriginateLoanHandler NewHandler(IAuditLogWriter audit) =>
-        new(new LoanEventStoreRepository(TestDatabase.ConnectionString), new StaticRateSheet(), audit);
+        new(new LoanEventStoreRepository(TestDatabase.ConnectionString), new StaticRateSheet(), audit, new FakeCurrentUser());
 
     [Fact]
     public async Task HandleAsync_LooksUpRate_AppendsOriginatedEvent()
     {
         var rates = new StaticRateSheet();
         var repository = new LoanEventStoreRepository(TestDatabase.ConnectionString);
-        var handler = new OriginateLoanHandler(repository, rates, new SpyAuditLogWriter());
+        var handler = new OriginateLoanHandler(repository, rates, new SpyAuditLogWriter(), new FakeCurrentUser());
         var customerId = Guid.NewGuid();
 
         var loanId = await handler.HandleAsync(customerId, 80_000m, RateType.Effective, 12, CancellationToken.None);

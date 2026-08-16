@@ -6,6 +6,7 @@
     <Project Path="src/LoanProject.Infrastructure/LoanProject.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/LoanProject.Api.Tests/LoanProject.Api.Tests.csproj" />
     <Project Path="tests/LoanProject.Domain.Tests/LoanProject.Domain.Tests.csproj" />
     <Project Path="tests/LoanProject.Infrastructure.Tests/LoanProject.Infrastructure.Tests.csproj" />
   </Folder>
