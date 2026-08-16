@@ -45,8 +45,19 @@ jobs:
 
       # Integration tests hit the compose services on localhost, exactly like a
       # developer's machine — same connection strings, same Vault, same seed.
-      - name: Test
-        run: dotnet test LoanProject.slnx --configuration Release --no-build --verbosity normal
+      #
+      # Run the assemblies SEQUENTIALLY, not as one `dotnet test <solution>`:
+      # a fresh CI database is migrated on first use, and two test processes
+      # migrating it at once race (SQL error 2705 — the migration applies twice).
+      # Domain first (no DB), then Infrastructure migrates the schema, then the
+      # API tests find it already migrated. Locally this never showed because the
+      # dev database is already migrated, so every Migrate() is a no-op.
+      - name: Test - Domain (unit)
+        run: dotnet test tests/LoanProject.Domain.Tests/LoanProject.Domain.Tests.csproj --configuration Release --no-build --verbosity normal
+      - name: Test - Infrastructure (integration)
+        run: dotnet test tests/LoanProject.Infrastructure.Tests/LoanProject.Infrastructure.Tests.csproj --configuration Release --no-build --verbosity normal
+      - name: Test - API (integration)
+        run: dotnet test tests/LoanProject.Api.Tests/LoanProject.Api.Tests.csproj --configuration Release --no-build --verbosity normal
 
       - name: Tear down infrastructure
         if: always()
