@@ -1,0 +1,62 @@
+Load test run — 2026-08-16
+Target: HA stack (3 API replicas + nginx) on http://localhost:8080
+k6: 20 peak VUs, ~55s per scenario. SQL Server 2022 (Docker).
+
+================================================================
+amortization.js  —  POST /amortization/preview  (pure CPU, anonymous)
+================================================================
+THRESHOLDS
+  http_req_duration  p(95)=6.05ms  p(99)=8.2ms      [PASS]
+  http_req_failed    rate=0.00%                      [PASS]
+checks_succeeded ... 100.00% (445804/445804)
+http_req_duration .. avg=3.72ms med=3.74ms p(90)=5.36ms p(95)=6.05ms max=29.87ms
+http_reqs .......... 222902  4052.72/s
+
+================================================================
+rates.js  —  GET /rates/Effective/12  (Redis cache-aside, anonymous)
+================================================================
+THRESHOLDS
+  http_req_duration  p(95)=6.88ms  p(99)=11.33ms    [PASS]
+  http_req_failed    rate=0.00%                      [PASS]
+checks_succeeded ... 100.00% (235810/235810)
+http_req_duration .. avg=3.55ms med=3.26ms p(90)=5.46ms p(95)=6.88ms max=228.93ms
+http_reqs .......... 235810  4287.41/s
+
+================================================================
+command-path.js  —  POST /loans  (CQRS write / event store, admin auth)
+================================================================
+THRESHOLDS
+  http_req_duration  p(95)=17.92ms  p(99)=23.47ms   [PASS]
+  http_req_failed    rate=0.00%                      [PASS]
+checks_succeeded ... 100.00% (73595/73595)
+http_req_duration .. avg=11.52ms med=11.05ms p(90)=15.98ms p(95)=17.92ms max=408.51ms
+http_reqs .......... 73595  1334.42/s
+
+================================================================
+query-path.js  —  GET /reports/portfolio-summary  (CQRS read, admin auth)
+================================================================
+THRESHOLDS
+  http_req_duration  p(95)=134.66ms  p(99)=180.96ms [PASS]
+  http_req_failed    rate=0.00%                      [PASS]
+checks_succeeded ... 100.00% (13798/13798)
+http_req_duration .. avg=61.94ms med=51.91ms p(90)=114.67ms p(95)=134.66ms max=732.6ms
+http_reqs .......... 13798  247.50/s
+NOTE: ran after command-path created tens of thousands of loans, so the
+      aggregation is over a large portfolio (see summary.md finding #1).
+
+================================================================
+webhook.js  —  POST /webhooks/stripe  (HMAC verify + per-request Vault fetch)
+================================================================
+http_req_duration .. avg=8.16ms med=6.37ms p(90)=14.91ms p(95)=19.61ms p(99)=36.94ms
+http_reqs .......... 103263  1877.49/s
+checks_succeeded ... 0.00%   (synthetic signature did not validate — see summary.md #2/#4)
+NOTE: a no-signature diagnostic returned 500 (NullReferenceException) before the
+      fix; now returns 400. Latency reflects the endpoint's fixed cost.
+
+================================================================
+Rehydration benchmark (LoanRehydrationBenchmarkTests) — local SQL, 50 loads
+================================================================
+Events in stream      : 63
+Rehydrate w/ snapshot : 1.748 ms avg
+Rehydrate full replay : 2.381 ms avg
+Snapshot speedup      : 1.36x
