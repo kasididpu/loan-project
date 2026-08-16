@@ -1,0 +1,106 @@
+# Local high-availability overlay (Phase 9). Adds three API replicas, one
+# background worker, and an nginx load balancer on top of the base infra.
+#
+# Run it together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
+# then seed the container-facing Vault document once (service-name secrets):
+#   sh scripts/seed-vault-docker.sh
+#
+# The whole point of the split: the API is stateless and scales horizontally,
+# while all background singletons (event dispatcher, projector, payment consumer,
+# Quartz jobs) run in exactly ONE worker — see App:Role in Program.cs.
+
+x-api-image: &api-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: loan-api:phase9
+
+x-api-env: &api-env
+  ASPNETCORE_ENVIRONMENT: Development
+  ASPNETCORE_URLS: http://+:8080
+  # Infrastructure endpoints use compose service names, never localhost.
+  ConnectionStrings__LoanDb: "Server=sqlserver,1433;Database=LoanDb;User Id=sa;Password=${MSSQL_SA_PASSWORD:-LoanDev!Passw0rd};TrustServerCertificate=True"
+  ConnectionStrings__LoanReadDb: "Server=sqlserver,1433;Database=LoanReadDb;User Id=sa;Password=${MSSQL_SA_PASSWORD:-LoanDev!Passw0rd};TrustServerCertificate=True"
+  ConnectionStrings__Mongo: "mongodb://root:${MONGO_ROOT_PASSWORD:-LoanDevMongo1}@mongodb:27017"
+  ConnectionStrings__RabbitMq: "amqp://guest:guest@rabbitmq:5672"
+  ConnectionStrings__Redis: "redis:6379"
+  Redpanda__BootstrapServers: "redpanda:29092"
+  Seq__ServerUrl: "http://seq:80"
+  # Genuine secrets come from the container Vault document (loan-docker), which
+  # also carries service-name connection strings. If it is unseeded the app falls
+  # back to the values above (dev only) and logs a warning.
+  Vault__Address: "http://vault:8200"
+  Vault__Token: "${VAULT_DEV_ROOT_TOKEN_ID:-loan-dev-root}"
+  Vault__BasePath: "loan-docker"
+
+x-api-depends: &api-depends
+  sqlserver:
+    condition: service_healthy
+  vault:
+    condition: service_healthy
+  mongodb:
+    condition: service_healthy
+  redpanda:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  seq:
+    condition: service_started
+
+services:
+  api1:
+    <<: *api-image
+    container_name: loan-api1
+    environment:
+      <<: *api-env
+      App__Role: api
+    depends_on: *api-depends
+    restart: unless-stopped
+
+  api2:
+    <<: *api-image
+    container_name: loan-api2
+    environment:
+      <<: *api-env
+      App__Role: api
+    depends_on: *api-depends
+    restart: unless-stopped
+
+  api3:
+    <<: *api-image
+    container_name: loan-api3
+    environment:
+      <<: *api-env
+      App__Role: api
+    depends_on: *api-depends
+    restart: unless-stopped
+
+  # Single background worker: owns the dispatcher cursor, the projector, the
+  # payment consumer, the Quartz jobs, and the dev DB migration/seed.
+  worker:
+    <<: *api-image
+    container_name: loan-worker
+    environment:
+      <<: *api-env
+      App__Role: worker
+    depends_on: *api-depends
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: loan-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+      api3:
+        condition: service_healthy
+    restart: unless-stopped
