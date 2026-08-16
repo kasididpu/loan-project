@@ -73,7 +73,23 @@ jobs:
       # irrelevant to the serve path this job smokes. Readiness is polled through
       # nginx instead (the api replicas don't migrate, so they come up promptly).
       - name: Build image and start the HA stack
-        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
+        run: |
+          # A backing service (RabbitMQ has been the flaky one) occasionally exits
+          # on first boot in CI, which fails an api replica's service_healthy
+          # dependency and aborts the whole `up`. Retry the bring-up a couple of
+          # times, tearing the volumes down between attempts, so a one-off
+          # container exit does not fail the job. Readiness through nginx below is
+          # the real gate; this only absorbs the flaky first boot.
+          for attempt in 1 2 3; do
+            echo "== HA stack bring-up attempt $attempt =="
+            if docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build; then
+              exit 0
+            fi
+            echo "bring-up attempt $attempt failed; tearing down and retrying"
+            docker compose -f docker-compose.yml -f docker-compose.ha.yml down -v || true
+            sleep 5
+          done
+          echo "HA stack did not come up after 3 attempts"; exit 1
 
       # Poll /health/ready through the load balancer: proves nginx routes to a
       # replica that can reach its backing services. No Vault seeding needed —
