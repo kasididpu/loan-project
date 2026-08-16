@@ -1,0 +1,79 @@
+name: CI
+
+# build + full test suite + a Docker image build + a secret scan. No deploy:
+# this project is a local-first showcase (the Pi5/cloud deploy path was dropped).
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & full test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The solution is a .slnx, which needs the .NET 9 SDK to build; the 8.0
+      # runtime (bundled with the 8.0 SDK) runs the net8.0 test assemblies.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      # The whole system runs on docker compose by design. --wait blocks until
+      # every service with a healthcheck is healthy, so the integration tests
+      # never race a backing service that is still starting.
+      - name: Start infrastructure
+        run: docker compose up -d --wait --wait-timeout 300
+
+      # Non-secret dev defaults into the dev Vault. Stripe keys are intentionally
+      # absent in CI (the gitignored local env file is not here) — the tests do
+      # not need them, so the seeder just skips that step.
+      - name: Seed dev Vault
+        run: sh scripts/seed-vault-dev.sh
+
+      - name: Build
+        run: dotnet build LoanProject.slnx --configuration Release
+
+      # Integration tests hit the compose services on localhost, exactly like a
+      # developer's machine — same connection strings, same Vault, same seed.
+      - name: Test
+        run: dotnet test LoanProject.slnx --configuration Release --no-build --verbosity normal
+
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose down -v
+
+  docker-image:
+    name: API image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Verify the multi-stage Dockerfile still produces an image (no push — the
+      # image is only ever run locally via docker-compose.ha.yml).
+      - name: Build the API image
+        run: docker build -t loan-api:ci .
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — the repo will become public, so scan every commit
+
+      # Run the gitleaks binary directly (no marketplace action / license gate).
+      # --redact keeps any hit out of the logs; the config allowlists the known
+      # non-secret dev defaults so only a real leak fails the job.
+      - name: Run gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --verbose --exit-code 1

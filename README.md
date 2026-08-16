@@ -2,6 +2,8 @@
 
 A mini loan management API built around financial-services backend patterns: amortization schedules (reducing balance method), flat and effective (IRR) interest rates, late-payment fees, an event-sourced `Loan` aggregate with a validated state machine, CQRS with separate write/read databases synced over Redpanda, and real Stripe (Test Mode) payment integration with webhook signature verification and idempotent processing.
 
+[![CI](https://github.com/kasididpu/demo-loan-project/actions/workflows/ci.yml/badge.svg)](https://github.com/kasididpu/demo-loan-project/actions/workflows/ci.yml)
+
 > **Status: work in progress.** Built phase by phase; every phase lands as reviewed, tested commits. Nothing here is documented before it exists.
 
 ## Roadmap Progress
@@ -15,8 +17,8 @@ A mini loan management API built around financial-services backend patterns: amo
 - [x] Phase 7 — KYC/AML rules
 - [x] Phase 8 — Auth, authorization & data protection
 - [x] Phase 9 — High availability (API replicas, local compose)
-- [ ] Phase 10 — Performance & load testing
-- [ ] Phase 11 — DevOps, CI & observability
+- [x] Phase 10 — Performance & load testing
+- [x] Phase 11 — DevOps, CI & observability
 - [ ] Phase 12 — Documentation
 - [ ] Optional final step — cloud deployment path (Azure SQL Database compatibility)
 
@@ -168,6 +170,20 @@ X-Upstream-Addr: 172.19.0.12:8080
 X-Upstream-Addr: 172.19.0.12:8080
 X-Upstream-Addr: 172.19.0.9:8080
 ```
+
+## Continuous Integration (Phase 11)
+
+Every push runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — three jobs, no deploy (this is a local-first showcase):
+
+- **Build & full test suite** — brings the *whole* system up with `docker compose up -d --wait` (SQL Server, Redpanda, RabbitMQ, MongoDB, Redis, Vault), seeds the dev Vault, then runs all tests against it. The integration tests hit the compose services on `localhost`, exactly like a developer's machine — the same suite that must pass locally passes in CI. (The `.slnx` solution is built with the .NET 9 SDK; the net8.0 tests run on the 8.0 runtime.)
+- **API image builds** — `docker build` of the multi-stage Dockerfile, so a broken image fails CI before it is ever run.
+- **Secret scan** — `gitleaks` over the full history (the repo will become public). The known non-secret dev defaults are allowlisted in [`.gitleaks.toml`](.gitleaks.toml); a real credential fails the job.
+
+**Secret boundary.** No static secret lives in the workflow. Deploy-time credentials would come from GitHub Secrets (none needed here — there is no deploy); every *runtime* secret (Stripe key, connection strings) is read from Vault through `ISecretProvider` and is never present in CI.
+
+## Observability
+
+All services log through **Serilog** to **Seq** (`http://localhost:5341`) with structured events and request logging. A Customer's PII is masked by a destructuring policy before it ever reaches a sink, so a national id or bank account never lands in a log. Health is observable at `/health/live` and `/health/ready` (Phase 9).
 
 ## Conventions
 
