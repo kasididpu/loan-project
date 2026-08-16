@@ -11,10 +11,10 @@ A mini loan management API built around financial-services backend patterns: amo
 - [x] Phase 3.5 — Secret management (Vault + `ISecretProvider`)
 - [x] Phase 4 — Stripe payment integration (Test Mode)
 - [x] Phase 5 — Async processing, event dispatcher, reconciliation/settlement
-- [ ] Phase 6 — CQRS write/read databases + reporting
-- [ ] Phase 7 — KYC/AML rules
-- [ ] Phase 8 — Auth, authorization & data protection
-- [ ] Phase 9 — High availability (API replicas, local compose)
+- [x] Phase 6 — CQRS write/read databases + reporting
+- [x] Phase 7 — KYC/AML rules
+- [x] Phase 8 — Auth, authorization & data protection
+- [x] Phase 9 — High availability (API replicas, local compose)
 - [ ] Phase 10 — Performance & load testing
 - [ ] Phase 11 — DevOps, CI & observability
 - [ ] Phase 12 — Documentation
@@ -97,6 +97,77 @@ separate logs and separate audit entries:
 In short: reconciliation is a *check* between two books; settlement is an
 *action* on our own book. Both run inside the app on Quartz because the
 optional cloud target (Azure SQL Database) has no SQL Agent.
+
+## High Availability (Phase 9)
+
+The API is stateless and scales horizontally, while every background singleton
+runs in exactly one worker. The local HA stack proves this with three API
+replicas and one worker behind an nginx load balancer — the *same* image in
+different roles, chosen by `App:Role`:
+
+```
+                       ┌───────────────┐
+   client  ─────────▶  │     nginx     │  :8080  (round-robin + passive health)
+                       └───────┬───────┘
+             ┌─────────────────┼─────────────────┐
+        ┌────▼───┐        ┌────▼───┐        ┌────▼───┐         ┌───────────────┐
+        │  api1  │        │  api2  │        │  api3  │         │    worker     │
+        │  HTTP  │        │  HTTP  │        │  HTTP  │         │ dispatcher +  │
+        │  only  │        │  only  │        │  only  │         │ projector +   │
+        └────┬───┘        └────┬───┘        └────┬───┘         │ consumer +    │
+             └─────────────────┼─────────────────┘             │ Quartz + EF   │
+                               │                               │ migrate/seed  │
+              shared infra (SQL ×2, Redis, Mongo,              └───────┬───────┘
+              Redpanda, RabbitMQ, Vault, Seq)  ◀───────────────────────┘
+```
+
+**Why split the roles.** The event dispatcher advances one persisted cursor as
+it publishes the ledger to Redpanda; a second dispatcher would race that cursor
+and double-publish. The Quartz jobs settle the day's collections; a second
+scheduler would settle twice. So `App:Role=api` serves HTTP with **no**
+background work, `App:Role=worker` (exactly one instance) owns the dispatcher,
+the projector, the payment consumer, the scheduler, and the dev DB
+migration/seed. `App:Role=all` (the default for `dotnet run`) does both, so the
+single-process dev experience is unchanged.
+
+**Health probes.** `/health/live` is liveness — the process is up.
+`/health/ready` is readiness — it verifies the write DB, read DB, Redis, Mongo,
+and RabbitMQ, so the load balancer only routes to a replica that can actually
+serve.
+
+**Run the HA stack**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
+sh scripts/seed-vault-docker.sh        # service-name secrets for the containers
+curl http://localhost:8080/health/ready
+```
+
+**Failover test.** With traffic flowing through nginx on `:8080`, stop a replica
+and watch requests keep succeeding on the survivors — nginx takes the dead one
+out of rotation after one failed attempt, and the `X-Upstream-Addr` response
+header shows which replica answered:
+
+```bash
+docker stop loan-api2      # kill a replica mid-traffic
+# every request still returns 200; X-Upstream-Addr now shows only api1 / api3
+docker start loan-api2     # it rejoins the rotation
+```
+
+Observed on 2026-08-16 — three replicas round-robin normally, and a stopped
+replica drops out with zero failed requests:
+
+```
+# normal — round-robin across all three
+X-Upstream-Addr: 172.19.0.10:8080
+X-Upstream-Addr: 172.19.0.9:8080
+X-Upstream-Addr: 172.19.0.12:8080
+
+# after `docker stop loan-api2` — 8/8 requests still 200, only two replicas left
+200 200 200 200 200 200 200 200
+X-Upstream-Addr: 172.19.0.12:8080
+X-Upstream-Addr: 172.19.0.9:8080
+```
 
 ## Conventions
 

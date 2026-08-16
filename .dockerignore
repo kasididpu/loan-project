@@ -1,0 +1,26 @@
+# Keep the build context small and reproducible: only src/ is copied by the
+# Dockerfile, and host build output must never leak into the image (it also
+# avoids Google Drive-locked obj/ files stalling the context upload).
+**/bin/
+**/obj/
+**/.vs/
+.vscode/
+.idea/
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# Not needed at runtime and never in an image.
+tests/
+notes/
+docs/
+scripts/
+nginx/
+.remember/
+.claude/
+**/*.user
+**/*.md
+.tmp.driveupload/
+LoanProject.http

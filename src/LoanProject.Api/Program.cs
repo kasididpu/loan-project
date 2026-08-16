@@ -15,6 +15,7 @@ using LoanProject.Application.Settlement;
 using LoanProject.Domain.Customers;
 using LoanProject.Infrastructure.Auth;
 using LoanProject.Infrastructure.EventStore;
+using LoanProject.Infrastructure.Health;
 using LoanProject.Infrastructure.Jobs;
 using LoanProject.Infrastructure.Messaging;
 using LoanProject.Infrastructure.Mongo;
@@ -30,6 +31,7 @@ using LoanProject.Infrastructure.Stripe;
 using LoanProject.Api.Endpoints;
 using LoanProject.Api.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
@@ -38,6 +40,20 @@ using Serilog;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Phase 9 (HA): one image runs in one of three roles, selected by App:Role.
+//   "all"    (default) — serves HTTP *and* runs every background singleton plus
+//                        the dev DB migration/seed. This is a plain `dotnet run`.
+//   "api"    — serves HTTP only; sits behind the load balancer, scaled out.
+//   "worker" — the single instance that owns all background work: the event
+//              dispatcher (whose cursor must never be raced), the read-model
+//              projector, the payment-notification consumer, and the Quartz jobs.
+// Exactly one process runs background work, so nothing double-fires (a duplicated
+// dispatcher would corrupt the cursor; duplicated Quartz jobs would settle twice).
+var appRole = builder.Configuration["App:Role"] ?? "all";
+var runsBackgroundWork =
+    appRole.Equals("all", StringComparison.OrdinalIgnoreCase) ||
+    appRole.Equals("worker", StringComparison.OrdinalIgnoreCase);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -97,7 +113,12 @@ if (!string.IsNullOrWhiteSpace(vaultAddress))
 {
     var vaultToken = builder.Configuration["Vault:Token"]
         ?? throw new InvalidOperationException("Vault:Token is not configured.");
-    ISecretProvider secretProvider = new VaultSecretProvider(vaultAddress, vaultToken);
+    // Per-environment secret document: host dev reads "loan-api" (localhost
+    // connection strings); the containerized HA stack reads "loan-docker"
+    // (service-name connection strings). Genuine secrets — keys, passwords,
+    // Stripe — are identical in both documents.
+    var vaultBasePath = builder.Configuration["Vault:BasePath"] ?? "loan-api";
+    ISecretProvider secretProvider = new VaultSecretProvider(vaultAddress, vaultToken, basePath: vaultBasePath);
     builder.Services.AddSingleton(secretProvider);
 
     try
@@ -155,19 +176,26 @@ builder.Services.AddSingleton<ILoanEventPublisher>(provider => new RedpandaLoanE
     redpandaBootstrap,
     RedpandaLoanEventPublisher.DefaultTopic,
     provider.GetRequiredService<ILogger<RedpandaLoanEventPublisher>>()));
-builder.Services.AddHostedService<EventDispatcher>();
+// The dispatcher runs on the worker only — a second one would race the cursor.
+if (runsBackgroundWork)
+    builder.Services.AddHostedService<EventDispatcher>();
 
 // Payment notifications over RabbitMQ: best-effort publisher + deduping consumer.
+// The publisher stays on every role (the webhook path publishes); the consumer
+// drains on the worker only.
 builder.Services.AddSingleton<IPaymentNotifier>(provider => new RabbitMqPaymentNotifier(
     rabbitConnectionString,
     RabbitMqPaymentNotifier.DefaultQueueName,
     provider.GetRequiredService<ILogger<RabbitMqPaymentNotifier>>()));
 builder.Services.AddSingleton<PaymentNotificationDeduplicator>();
-builder.Services.AddHostedService(provider => new PaymentNotificationConsumer(
-    rabbitConnectionString,
-    RabbitMqPaymentNotifier.DefaultQueueName,
-    provider.GetRequiredService<PaymentNotificationDeduplicator>(),
-    provider.GetRequiredService<ILogger<PaymentNotificationConsumer>>()));
+if (runsBackgroundWork)
+{
+    builder.Services.AddHostedService(provider => new PaymentNotificationConsumer(
+        rabbitConnectionString,
+        RabbitMqPaymentNotifier.DefaultQueueName,
+        provider.GetRequiredService<PaymentNotificationDeduplicator>(),
+        provider.GetRequiredService<ILogger<PaymentNotificationConsumer>>()));
+}
 
 // Rate lookup behind a Redis cache-aside decorator. AbortOnConnectFail off:
 // the app must boot (and serve rates from the source) even with Redis down.
@@ -184,25 +212,30 @@ builder.Services.AddSingleton<IInterestRateLookup>(provider => new RedisRateCach
 builder.Services.AddScoped<IStripeEventSource, StripeEventSource>();
 builder.Services.AddScoped<ReconcileStripePaymentsHandler>();
 builder.Services.AddScoped<SettleEndOfDayHandler>();
-var reconciliationCron = builder.Configuration["Jobs:ReconciliationCron"] ?? "0 0/30 * * * ?";
-var settlementCron = builder.Configuration["Jobs:SettlementCron"] ?? "0 59 23 * * ?";
-builder.Services.AddQuartz(quartz =>
+// The scheduler runs on the worker only: replicated Quartz would reconcile and
+// settle N times per cron tick. The handlers above stay registered everywhere.
+if (runsBackgroundWork)
 {
-    var reconciliationKey = new JobKey(nameof(ReconciliationJob));
-    quartz.AddJob<ReconciliationJob>(job => job.WithIdentity(reconciliationKey));
-    quartz.AddTrigger(trigger => trigger
-        .ForJob(reconciliationKey)
-        .WithIdentity($"{nameof(ReconciliationJob)}Trigger")
-        .WithCronSchedule(reconciliationCron));
+    var reconciliationCron = builder.Configuration["Jobs:ReconciliationCron"] ?? "0 0/30 * * * ?";
+    var settlementCron = builder.Configuration["Jobs:SettlementCron"] ?? "0 59 23 * * ?";
+    builder.Services.AddQuartz(quartz =>
+    {
+        var reconciliationKey = new JobKey(nameof(ReconciliationJob));
+        quartz.AddJob<ReconciliationJob>(job => job.WithIdentity(reconciliationKey));
+        quartz.AddTrigger(trigger => trigger
+            .ForJob(reconciliationKey)
+            .WithIdentity($"{nameof(ReconciliationJob)}Trigger")
+            .WithCronSchedule(reconciliationCron));
 
-    var settlementKey = new JobKey(nameof(SettlementJob));
-    quartz.AddJob<SettlementJob>(job => job.WithIdentity(settlementKey));
-    quartz.AddTrigger(trigger => trigger
-        .ForJob(settlementKey)
-        .WithIdentity($"{nameof(SettlementJob)}Trigger")
-        .WithCronSchedule(settlementCron));
-});
-builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
+        var settlementKey = new JobKey(nameof(SettlementJob));
+        quartz.AddJob<SettlementJob>(job => job.WithIdentity(settlementKey));
+        quartz.AddTrigger(trigger => trigger
+            .ForJob(settlementKey)
+            .WithIdentity($"{nameof(SettlementJob)}Trigger")
+            .WithCronSchedule(settlementCron));
+    });
+    builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
+}
 
 // --- Phase 6: CQRS read side ---
 
@@ -228,11 +261,16 @@ builder.Services.AddScoped<IDailyCollectionsQuery, DailyCollectionsQuery>();
 // Projector: single consumer draining loan-events into the Read DB. A fresh
 // scoped projection (and ReadDbContext) per message, same lifetime as a request.
 builder.Services.AddScoped<LoanReadModelProjection>();
-builder.Services.AddHostedService(provider => new LoanReadModelProjector(
-    redpandaBootstrap,
-    RedpandaLoanEventPublisher.DefaultTopic,
-    provider.GetRequiredService<IServiceScopeFactory>(),
-    provider.GetRequiredService<ILogger<LoanReadModelProjector>>()));
+// One projector drains loan-events into the Read DB — worker only, so the read
+// side is never written by competing consumers.
+if (runsBackgroundWork)
+{
+    builder.Services.AddHostedService(provider => new LoanReadModelProjector(
+        redpandaBootstrap,
+        RedpandaLoanEventPublisher.DefaultTopic,
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        provider.GetRequiredService<ILogger<LoanReadModelProjector>>()));
+}
 
 // --- Phase 8: authentication, authorization & data protection ---
 
@@ -283,6 +321,19 @@ builder.Services.AddSingleton<IOtpStore>(provider =>
 builder.Services.AddScoped<CreateCustomerHandler>();
 builder.Services.AddScoped<AuthDataSeeder>();
 
+// --- Phase 9: high availability ---
+
+// Liveness ("/health/live") is just "the process is up". Readiness
+// ("/health/ready") verifies the backing services this instance needs, so the
+// load balancer only routes to replicas that can actually serve. The probes live
+// in Infrastructure because they reach out to external tech.
+builder.Services.AddHealthChecks()
+    .AddCheck("write-db", new SqlServerHealthCheck(connectionString), tags: ["ready"])
+    .AddCheck("read-db", new SqlServerHealthCheck(readConnectionString), tags: ["ready"])
+    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
+    .AddCheck<MongoHealthCheck>("mongo", tags: ["ready"])
+    .AddCheck("rabbitmq", new RabbitMqHealthCheck(rabbitConnectionString), tags: ["ready"]);
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -290,22 +341,25 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 
-    // Sample data for local exploration only — real environments are never seeded.
-    using var scope = app.Services.CreateScope();
+    // Create/migrate both databases and seed sample data on boot in dev — but
+    // only on the single background-work instance, so API replicas never race
+    // each other running EF migrations. Prod stays deliberate: dev-only block.
+    if (runsBackgroundWork)
+    {
+        // Sample data for local exploration only — real environments are never seeded.
+        using var scope = app.Services.CreateScope();
 
-    // Create/migrate both databases on boot in dev so the app is ready without a
-    // manual `dotnet ef database update` — same treatment for Write and Read.
-    // Prod stays deliberate: this whole block is dev-only. Write DB first, since
-    // the seeder and event store need its tables.
-    await scope.ServiceProvider.GetRequiredService<LoanDbContext>().Database.MigrateAsync();
-    await scope.ServiceProvider.GetRequiredService<ReadDbContext>().Database.MigrateAsync();
+        // Write DB first, since the seeder and event store need its tables.
+        await scope.ServiceProvider.GetRequiredService<LoanDbContext>().Database.MigrateAsync();
+        await scope.ServiceProvider.GetRequiredService<ReadDbContext>().Database.MigrateAsync();
 
-    await scope.ServiceProvider.GetRequiredService<DevDataSeeder>().SeedAsync(CancellationToken.None);
+        await scope.ServiceProvider.GetRequiredService<DevDataSeeder>().SeedAsync(CancellationToken.None);
 
-    // Dev-only auth seed: roles, one demo user per role, and the OAuth client.
-    // Credentials come from Vault (dev fallback) — nothing is hard-coded here.
-    await scope.ServiceProvider.GetRequiredService<AuthDataSeeder>()
-        .SeedAsync(devSeedUserPassword, DevOAuthClientId, devOAuthClientSecret, CancellationToken.None);
+        // Dev-only auth seed: roles, one demo user per role, and the OAuth client.
+        // Credentials come from Vault (dev fallback) — nothing is hard-coded here.
+        await scope.ServiceProvider.GetRequiredService<AuthDataSeeder>()
+            .SeedAsync(devSeedUserPassword, DevOAuthClientId, devOAuthClientSecret, CancellationToken.None);
+    }
 }
 
 // Structured request logging (method, path, status, elapsed) via Serilog.
@@ -317,6 +371,11 @@ app.UseHttpsRedirection();
 // whose policies they enforce.
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Health endpoints are anonymous — the load balancer and container runtime probe
+// them without a token. Liveness runs no checks; readiness runs the "ready" set.
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
 // Endpoint groups live in Api/Endpoints — Program.cs only composes.
 app.MapAuth();
