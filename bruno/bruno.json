@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Loan Management API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

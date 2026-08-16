@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Confluent.Kafka;
+using Confluent.Kafka.Admin;
 using LoanProject.Infrastructure.Streaming;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -46,6 +47,11 @@ public sealed class LoanReadModelProjector : BackgroundService
         // Let host startup finish before the blocking consume loop begins.
         await Task.Yield();
 
+        // On a fresh broker the topic does not exist until someone first produces
+        // to it. Create it up front (idempotent) so the consumer never subscribes
+        // to a missing topic — deterministic for a clone-and-run setup.
+        await EnsureTopicExistsAsync(stoppingToken);
+
         var config = new ConsumerConfig
         {
             BootstrapServers = _bootstrapServers,
@@ -70,7 +76,23 @@ public sealed class LoanReadModelProjector : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                var result = consumer.Consume(stoppingToken);
+                ConsumeResult<string, string>? result;
+                try
+                {
+                    result = consumer.Consume(stoppingToken);
+                }
+                catch (ConsumeException exception)
+                {
+                    // A transient consume failure — e.g. the topic is not visible
+                    // yet on a fresh broker — must not fault the host (the default
+                    // BackgroundService behaviour would stop it). Back off and
+                    // retry; the dispatcher's first publish makes the topic appear.
+                    _logger.LogWarning(
+                        exception, "Read-model consume failed ({Reason}); retrying.", exception.Error.Reason);
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    continue;
+                }
+
                 if (result?.Message is null)
                     continue;
 
@@ -111,6 +133,35 @@ public sealed class LoanReadModelProjector : BackgroundService
         finally
         {
             consumer.Close();
+        }
+    }
+
+    /// <summary>
+    /// Creates the loan-events topic if it is missing. Idempotent and best-effort:
+    /// "already exists" is the normal case, and any other failure falls through to
+    /// the resilient consume loop, which retries once the topic appears.
+    /// </summary>
+    private async Task EnsureTopicExistsAsync(CancellationToken cancellationToken)
+    {
+        using var admin = new AdminClientBuilder(
+            new AdminClientConfig { BootstrapServers = _bootstrapServers }).Build();
+        try
+        {
+            await admin.CreateTopicsAsync(new[]
+            {
+                new TopicSpecification { Name = _topic, NumPartitions = 1, ReplicationFactor = 1 },
+            });
+            _logger.LogInformation("Created topic {Topic}.", _topic);
+        }
+        catch (CreateTopicsException exception)
+            when (exception.Results.All(result => result.Error.Code == ErrorCode.TopicAlreadyExists))
+        {
+            // Already there — a previous run, or the dispatcher's first publish.
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception, "Could not pre-create topic {Topic}; relying on consume retry.", _topic);
         }
     }
 }

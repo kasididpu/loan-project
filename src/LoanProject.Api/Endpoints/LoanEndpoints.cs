@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LoanProject.Application.Auth;
 using LoanProject.Application.Customers;
 using LoanProject.Application.Loans;
@@ -23,6 +24,8 @@ public static class LoanEndpoints
         app.MapPost("/loans/{id:guid}/disburse", DisburseAsync).RequireAuthorization(AuthPolicies.LoanOfficer);
         app.MapPost("/loans/{id:guid}/reject", RejectAsync).RequireAuthorization(AuthPolicies.LoanOfficer);
         app.MapGet("/loans/{id:guid}", GetStatusAsync).RequireAuthorization();
+        // Audit trail (phase 11.5): the loan's full event stream, staff-only.
+        app.MapGet("/loans/{id:guid}/events", GetEventsAsync).RequireAuthorization(AuthPolicies.BackOffice);
         return app;
     }
 
@@ -65,6 +68,27 @@ public static class LoanEndpoints
         // learn that another customer's loan exists.
         if (currentUser.IsInRole(Roles.Customer) && view.CustomerId != currentUser.CustomerId)
             return Results.NotFound();
+
+        return Results.Ok(view);
+    }
+
+    private static async Task<IResult> GetEventsAsync(
+        Guid id, ILoanEventStreamQuery query, CancellationToken cancellationToken)
+    {
+        var events = await query.GetAsync(id, cancellationToken);
+        // No events for this id means no such loan — 404, same as GET status.
+        if (events.Count == 0)
+            return Results.NotFound();
+
+        // Inline each stored payload as JSON so the audit trail reads cleanly
+        // instead of showing an escaped string.
+        var view = events
+            .Select(entry => new LoanEventView(
+                entry.Version,
+                entry.EventType,
+                entry.OccurredAtUtc,
+                JsonSerializer.Deserialize<JsonElement>(entry.EventDataJson)))
+            .ToList();
 
         return Results.Ok(view);
     }

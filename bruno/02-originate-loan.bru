@@ -1,0 +1,30 @@
+meta {
+  name: 02 Originate loan
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/loans
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+body:json {
+  {
+    "customerId": "{{customerId}}",
+    "principal": 100000,
+    "rateType": "Effective",
+    "termMonths": 12
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setVar("loanId", res.getBody().loanId);
+  }
+}

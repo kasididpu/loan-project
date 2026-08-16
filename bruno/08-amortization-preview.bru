@@ -1,0 +1,24 @@
+meta {
+  name: 08 Amortization preview
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/amortization/preview
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "principal": 100000,
+    "annualRate": 0.12,
+    "termMonths": 12,
+    "rateType": "Effective"
+  }
+}
+
+docs {
+  Stateless money calculator — no auth, no database. A CPU-bound load target too.
+}

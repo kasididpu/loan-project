@@ -1,0 +1,18 @@
+meta {
+  name: 06 Loan events (audit trail)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/loans/{{loanId}}/events
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+docs {
+  The loan's full append-only event stream from the ledger, in order. Staff-only.
+}

@@ -255,6 +255,8 @@ builder.Services.AddScoped<SetKycStatusHandler>();
 
 // Query side reads only the Read DB.
 builder.Services.AddScoped<ILoanStatusQuery, LoanStatusQuery>();
+// Read-only audit trail (phase 11.5): reads the loan's event stream from the ledger.
+builder.Services.AddScoped<ILoanEventStreamQuery>(_ => new LoanEventStreamQuery(connectionString));
 builder.Services.AddScoped<IPortfolioSummaryQuery, PortfolioSummaryQuery>();
 builder.Services.AddScoped<IDailyCollectionsQuery, DailyCollectionsQuery>();
 
