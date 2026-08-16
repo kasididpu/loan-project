@@ -19,8 +19,7 @@ A mini loan management API built around financial-services backend patterns: amo
 - [x] Phase 9 — High availability (API replicas, local compose)
 - [x] Phase 10 — Performance & load testing
 - [x] Phase 11 — DevOps, CI & observability
-- [ ] Phase 12 — Documentation
-- [ ] Optional final step — cloud deployment path (Azure SQL Database compatibility)
+- [x] Phase 12 — Documentation (architecture, ADRs, migration path, AI workflow)
 
 ## Tech Stack
 
@@ -43,6 +42,28 @@ A mini loan management API built around financial-services backend patterns: amo
 
 **Local-first by design.** The entire system runs on one machine with Docker Desktop — that is the deliverable, and anyone who clones the repo gets the same experience. The relational schema is kept Azure SQL Database–compatible, so a cloud deployment path remains open as an optional final step.
 
+## Architecture & documentation
+
+Clean Architecture (Domain / Application / Infrastructure / Api), CQRS with
+separate write/read databases, and a scoped event-sourced `Loan` aggregate — all
+running on `docker compose`.
+
+```mermaid
+flowchart LR
+    client([client]) --> nginx[nginx] --> api[api replicas ×N]
+    worker[worker ×1]
+    api --> wdb[(write / event store)] & rdb[(read model)] & redis[(Redis)] & mongo[(Mongo)]
+    worker --> wdb & rdb & rp[[Redpanda]] & mq[[RabbitMQ]]
+    wdb -->|dispatcher| rp -->|projector| rdb
+```
+
+Full design docs live in **[`docs/`](docs/)**:
+
+- [Architecture](docs/architecture.md) — layers, system, and the CQRS + event flow (diagrams)
+- ADRs — [Event sourcing (scoped)](docs/adr/0001-event-sourcing-scoped.md) · [CQRS split](docs/adr/0002-cqrs-read-write-split.md) · [Secret management](docs/adr/0003-secret-management.md) · [High availability](docs/adr/0004-high-availability.md)
+- [Production migration path](docs/production-migration.md) (local → Azure)
+- [AI workflow](docs/ai-workflow.md) — how this was built with an AI agent, and one example where it got it wrong
+
 ## Run It Locally
 
 Requires Docker Desktop and the .NET 8 SDK.
@@ -52,16 +73,22 @@ git clone <this repo> && cd loan-project
 docker compose up -d      # SQL Server 2022 + MongoDB 8 + Vault + Redpanda + RabbitMQ + Redis
 sh scripts/seed-vault-dev.sh   # put the local dev secrets into Vault (idempotent)
 
-dotnet tool install --global dotnet-ef
-dotnet ef database update --project src/LoanProject.Infrastructure --startup-project src/LoanProject.Api
-
-dotnet test               # domain unit tests + integration tests against both containers
-dotnet run --project src/LoanProject.Api   # dev startup seeds sample data, Swagger at /swagger
+dotnet test               # unit + integration tests; the schema is migrated on first use
+dotnet run --project src/LoanProject.Api   # dev boot migrates + seeds sample data, Swagger at /swagger
 ```
+
+Both databases are migrated automatically — the app on dev boot, the tests on
+first use — so no manual `dotnet ef database update` step is needed to clone and run.
 
 The dev seed creates two customers and one event-sourced loan with real
 history in the ledger (originated → approved → disbursed → first
 installment paid), so both worlds have data to explore immediately.
+
+**Explore it without a frontend:** open **Swagger** at `/swagger` and fire any
+endpoint from the browser; watch structured logs in **Seq** at
+`http://localhost:5341`; or import the portable **[Bruno collection](bruno/)** and
+run the whole flow (login → originate → approve → disburse → status → event audit
+trail → report). `GET /loans/{id}/events` returns a loan's full append-only history.
 
 The target end state, kept as a hard requirement throughout: `docker
 compose up` starts every backing service (Redis, RabbitMQ, Redpanda, Seq
