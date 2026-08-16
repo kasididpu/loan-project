@@ -2,7 +2,7 @@
 
 A mini loan management API built around financial-services backend patterns: amortization schedules (reducing balance method), flat and effective (IRR) interest rates, late-payment fees, an event-sourced `Loan` aggregate with a validated state machine, CQRS with separate write/read databases synced over Redpanda, and real Stripe (Test Mode) payment integration with webhook signature verification and idempotent processing.
 
-[![CI](https://github.com/kasididpu/demo-loan-project/actions/workflows/ci.yml/badge.svg)](https://github.com/kasididpu/demo-loan-project/actions/workflows/ci.yml)
+[![CI](https://github.com/kasididpu/loan-project/actions/workflows/ci.yml/badge.svg)](https://github.com/kasididpu/loan-project/actions/workflows/ci.yml)
 
 > **Status: work in progress.** Built phase by phase; every phase lands as reviewed, tested commits. Nothing here is documented before it exists.
 
