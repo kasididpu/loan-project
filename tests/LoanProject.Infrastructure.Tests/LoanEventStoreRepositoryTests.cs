@@ -19,8 +19,8 @@ public class LoanEventStoreRepositoryTests
     private static Loan NewActiveLoan(int termMonths = 12)
     {
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.12m, RateType.Effective, termMonths, Now);
-        loan.Approve("officer-1", Now);
-        loan.Disburse(Principal, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         return loan;
     }
 
@@ -70,9 +70,9 @@ public class LoanEventStoreRepositoryTests
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.12m, RateType.Effective, 12, Now);
         await repository.SaveAsync(loan, CancellationToken.None);
 
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
         await repository.SaveAsync(loan, CancellationToken.None);
-        loan.Disburse(Principal, Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         await repository.SaveAsync(loan, CancellationToken.None);
 
         var loaded = await repository.LoadAsync(loan.Id, CancellationToken.None);

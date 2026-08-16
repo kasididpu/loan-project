@@ -1,3 +1,4 @@
+using LoanProject.Application.Auth;
 using LoanProject.Application.Reports;
 
 namespace LoanProject.Api.Endpoints;
@@ -5,8 +6,8 @@ namespace LoanProject.Api.Endpoints;
 /// <summary>
 /// Reporting endpoints (phase 6) for operations/risk, all served from the Read
 /// DB. "now" is resolved here and passed down so the reports run against a
-/// single, testable clock reading. These expose portfolio-level data and will be
-/// restricted to back-office roles once auth arrives in Phase 8.
+/// single, testable clock reading. These expose portfolio-level data, so Phase 8
+/// restricts them to the BackOffice policy (any staff role).
 /// </summary>
 public static class ReportEndpoints
 {
@@ -19,8 +20,10 @@ public static class ReportEndpoints
 
     public static IEndpointRouteBuilder MapReports(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/reports/portfolio-summary", GetPortfolioSummaryAsync);
-        app.MapGet("/reports/daily-collections", GetDailyCollectionsAsync);
+        app.MapGet("/reports/portfolio-summary", GetPortfolioSummaryAsync)
+            .RequireAuthorization(AuthPolicies.BackOffice);
+        app.MapGet("/reports/daily-collections", GetDailyCollectionsAsync)
+            .RequireAuthorization(AuthPolicies.BackOffice);
         return app;
     }
 

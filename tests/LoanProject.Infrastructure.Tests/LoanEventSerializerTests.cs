@@ -13,13 +13,14 @@ namespace LoanProject.Infrastructure.Tests;
 public class LoanEventSerializerTests
 {
     private static readonly DateTime Now = new(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly Guid Officer = new("11111111-1111-1111-1111-111111111111");
 
     public static IEnumerable<object[]> AllEvents() =>
     [
         [new LoanOriginated(Guid.NewGuid(), Guid.NewGuid(), 100_000m, 0.12m, RateType.Effective, 12, Now)],
-        [new LoanApproved("officer-1", Now)],
-        [new LoanRejected("officer-1", "insufficient income", Now)],
-        [new LoanDisbursed(100_000m, Now)],
+        [new LoanApproved(Officer, "officer-1", Now)],
+        [new LoanRejected(Officer, "officer-1", "insufficient income", Now)],
+        [new LoanDisbursed(100_000m, Officer, "officer-1", Now)],
         [new PaymentReceived(Guid.NewGuid(), 8_884.88m, 1, "evt_test_1", Now)],
         [new LoanSettled(Guid.NewGuid(), Now)],
         [new LoanDefaulted(91, 92_115.12m, Now)],
@@ -41,7 +42,7 @@ public class LoanEventSerializerTests
     [Fact]
     public void Serialize_KnownEvent_UsesShortStableName()
     {
-        var (eventType, eventData) = LoanEventSerializer.Serialize(new LoanApproved("officer-1", Now));
+        var (eventType, eventData) = LoanEventSerializer.Serialize(new LoanApproved(Officer, "officer-1", Now));
 
         // The stored name is the contract — short, no namespace, so code
         // can be refactored without corrupting the ledger.

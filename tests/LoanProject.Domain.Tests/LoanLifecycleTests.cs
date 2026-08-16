@@ -15,8 +15,8 @@ public class LoanLifecycleTests
     private static Loan ActiveLoan()
     {
         var loan = OriginatedLoan();
-        loan.Approve("officer-1", Now);
-        loan.Disburse(Principal, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         return loan;
     }
 
@@ -37,7 +37,7 @@ public class LoanLifecycleTests
     {
         var loan = OriginatedLoan();
 
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
 
         Assert.Equal(LoanStatus.Approved, loan.Status);
     }
@@ -47,7 +47,7 @@ public class LoanLifecycleTests
     {
         var loan = OriginatedLoan();
 
-        loan.Reject("officer-1", "insufficient income", Now);
+        loan.Reject(Guid.NewGuid(), "officer-1", "insufficient income", Now);
 
         Assert.Equal(LoanStatus.Rejected, loan.Status);
     }
@@ -56,9 +56,9 @@ public class LoanLifecycleTests
     public void Disburse_WhenApproved_ActivatesLoanAndBuildsSchedule()
     {
         var loan = OriginatedLoan();
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
 
-        loan.Disburse(Principal, Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
 
         Assert.Equal(LoanStatus.Active, loan.Status);
         Assert.Equal(Principal, loan.OutstandingBalance);

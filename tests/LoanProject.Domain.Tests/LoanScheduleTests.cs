@@ -15,8 +15,8 @@ public class LoanScheduleTests
     private static Loan EffectiveLoan()
     {
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.12m, RateType.Effective, 12, Now);
-        loan.Approve("officer-1", Now);
-        loan.Disburse(Principal, Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         return loan;
     }
 
@@ -33,9 +33,9 @@ public class LoanScheduleTests
     public void Disburse_FlatLoan_BuildsFlatSchedule()
     {
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.06m, RateType.Flat, 12, Now);
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
 
-        loan.Disburse(Principal, Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
 
         Assert.Equal(AmortizationCalculator.BuildFlatSchedule(Principal, 0.06m, 12), loan.Schedule);
         Assert.Equal(8_833.33m, loan.Schedule![0].Payment);
@@ -45,7 +45,7 @@ public class LoanScheduleTests
     public void Schedule_IsNullBeforeDisbursement()
     {
         var loan = Loan.Originate(Guid.NewGuid(), Guid.NewGuid(), Principal, 0.12m, RateType.Effective, 12, Now);
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
 
         Assert.Null(loan.Schedule);
     }

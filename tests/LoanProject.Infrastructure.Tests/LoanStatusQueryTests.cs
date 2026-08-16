@@ -13,7 +13,7 @@ public class LoanStatusQueryTests
     {
         var loanId = Guid.NewGuid();
         var loan = Loan.Originate(loanId, Guid.NewGuid(), 90_000m, 0.16m, RateType.Effective, 12, Now);
-        loan.Approve("officer", Now);
+        loan.Approve(Guid.NewGuid(), "officer", Now);
         await ReadModelTesting.ProjectAllAsync(ReadModelTesting.Envelopes(loan));
 
         await using var db = TestReadDatabase.CreateContext();

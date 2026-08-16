@@ -1,4 +1,5 @@
 using LoanProject.Infrastructure.Persistence;
+using LoanProject.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace LoanProject.Infrastructure.Tests;
@@ -35,6 +36,8 @@ internal static class TestDatabase
         var options = new DbContextOptionsBuilder<LoanDbContext>()
             .UseSqlServer(ConnectionString)
             .Options;
-        return new LoanDbContext(options);
+        // A fixed test key: integration tests need encrypt/decrypt to round-trip,
+        // not to protect anything.
+        return new LoanDbContext(options, new AesGcmFieldEncryptor("test-field-encryption-key"));
     }
 }

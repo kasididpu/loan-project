@@ -1,0 +1,184 @@
+### Loan Project — Phase 8 auth/security demo
+#
+# Run with the VS Code "REST Client" extension or JetBrains Rider (click "Send
+# Request" above each call). Start the API first: `dotnet run --project
+# src/LoanProject.Api` (default profile serves http://localhost:5213).
+#
+# Requests are chained: run each named login once, then the requests below reuse
+# its token automatically. Easiest is to send top-to-bottom.
+#
+# Seeded dev credentials are non-secret local defaults (same class as
+# appsettings.Development.json). Real deployments use Vault.
+
+@base = http://localhost:5213
+@password = Dev!Passw0rd
+
+# ==================================================================
+# A. Role-based access control: 401 (no token) / 403 (wrong role) / 200
+# ==================================================================
+
+### A1 — no token -> 401 Unauthorized
+GET {{base}}/reports/portfolio-summary
+
+### A2 — log in as a customer (somsri)
+# @name loginCustomer
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "somsri", "password": "{{password}}" }
+
+### A3 — customer hits a back-office report -> 403 Forbidden
+GET {{base}}/reports/portfolio-summary
+Authorization: Bearer {{loginCustomer.response.body.$.access_token}}
+
+### A4 — log in as admin
+# @name loginAdmin
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "{{password}}" }
+
+### A5 — admin hits the report -> 200 OK
+GET {{base}}/reports/portfolio-summary
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+# ==================================================================
+# B. MFA / OTP second factor (the "officer" login has MFA enabled)
+# ==================================================================
+
+### B1 — password step -> { mfaRequired: true, mfaToken }; the 6-digit code is
+###      printed in the running app's console (and Seq), not returned here.
+# @name loginOfficer
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "officer", "password": "{{password}}" }
+
+### B2 — copy the code from the app log into otpCode, then send B3.
+@otpCode = 757102
+
+### B3 — exchange the MFA token + code for a real access token
+POST {{base}}/auth/verify-otp
+Content-Type: application/json
+
+{ "mfaToken": "{{loginOfficer.response.body.$.mfaToken}}", "code": "{{otpCode}}" }
+
+# ==================================================================
+# C. Field-level encryption + masking
+# ==================================================================
+
+### C1 — onboard a customer with PII (LoanOfficer/Admin only)
+# @name createCustomer
+POST {{base}}/customers
+Content-Type: application/json
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+{ "fullName": "Demo Person", "nationalId": "1234512345123", "bankAccountNumber": "123-4-56789-0" }
+
+### C2 — read it back -> nationalId/bankAccountNumber come masked (last 4 only).
+###      Ciphertext-at-rest: check the SQL column directly.
+###      Log masking: find "Customer onboarded" in Seq (http://localhost:5341).
+GET {{base}}/customers/{{createCustomer.response.body.$.id}}
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+# ==================================================================
+# D. OAuth 2.0 client-credentials (system-to-system)
+# ==================================================================
+
+### D1 — machine client obtains a token (form-encoded, per the OAuth spec)
+# @name clientToken
+POST {{base}}/auth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=loan-report-bot&client_secret=dev-oauth-client-secret-change-me
+
+### D2 — the System token may read reports -> 200
+GET {{base}}/reports/portfolio-summary
+Authorization: Bearer {{clientToken.response.body.$.access_token}}
+
+# ==================================================================
+# E. IDOR: a customer may read only their own records
+# ==================================================================
+
+### E1 — somsri reads her own customer record -> 200
+GET {{base}}/customers/5eed0000-0000-0000-0000-000000000002
+Authorization: Bearer {{loginCustomer.response.body.$.access_token}}
+
+### E2 — log in as a different customer (somchai)
+# @name loginOther
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "somchai", "password": "{{password}}" }
+
+### E3 — somchai tries to read somsri's record -> 404 (existence not leaked)
+GET {{base}}/customers/5eed0000-0000-0000-0000-000000000002
+Authorization: Bearer {{loginOther.response.body.$.access_token}}
+
+# ==================================================================
+# F. Loan lifecycle + KYC gate — actor taken from the token, not the body
+# ==================================================================
+
+### F1 — a customer cannot originate a loan -> 403
+POST {{base}}/loans
+Content-Type: application/json
+Authorization: Bearer {{loginCustomer.response.body.$.access_token}}
+
+{ "customerId": "5eed0000-0000-0000-0000-000000000002", "principal": 50000, "rateType": "Effective", "termMonths": 12 }
+
+### F2 — admin originates a loan for the customer created in C1 (still KYC Pending) -> 201
+# @name originate
+POST {{base}}/loans
+Content-Type: application/json
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+{ "customerId": "{{createCustomer.response.body.$.id}}", "principal": 50000, "rateType": "Effective", "termMonths": 12 }
+
+### F3 — approval is blocked by the KYC gate -> 422 (customer is not Verified yet)
+POST {{base}}/loans/{{originate.response.body.$.loanId}}/approve
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+# ==================================================================
+# G. KYC — locked to the Compliance policy
+# ==================================================================
+
+### G1 — a customer cannot change KYC -> 403 (compliance-only)
+PUT {{base}}/customers/{{createCustomer.response.body.$.id}}/kyc
+Content-Type: application/json
+Authorization: Bearer {{loginCustomer.response.body.$.access_token}}
+
+{ "status": "Verified" }
+
+### G2 — log in as a compliance officer
+# @name loginCompliance
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "compliance", "password": "{{password}}" }
+
+### G3 — compliance verifies the customer -> 204
+PUT {{base}}/customers/{{createCustomer.response.body.$.id}}/kyc
+Content-Type: application/json
+Authorization: Bearer {{loginCompliance.response.body.$.access_token}}
+
+{ "status": "Verified" }
+
+### G4 — approval now passes -> 204. approvedBy + ApprovedByUserId come from the
+###      token (no ApprovedBy in the body). Check the EventStore row afterwards.
+POST {{base}}/loans/{{originate.response.body.$.loanId}}/approve
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+### G5 — admin disburses (payment-path) -> 204. DisbursedByUserId from the token.
+POST {{base}}/loans/{{originate.response.body.$.loanId}}/disburse
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+# ==================================================================
+# H. AML — a large principal raises a review flag (Mongo auditLog), non-blocking
+# ==================================================================
+
+### H1 — admin originates a large loan -> 201; check Mongo "auditLog" for AmlReviewFlagged
+POST {{base}}/loans
+Content-Type: application/json
+Authorization: Bearer {{loginAdmin.response.body.$.access_token}}
+
+{ "customerId": "5eed0000-0000-0000-0000-000000000002", "principal": 5000000, "rateType": "Effective", "termMonths": 12 }

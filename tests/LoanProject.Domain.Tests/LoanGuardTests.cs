@@ -17,14 +17,14 @@ public class LoanGuardTests
     private static Loan ApprovedLoan()
     {
         var loan = OriginatedLoan();
-        loan.Approve("officer-1", Now);
+        loan.Approve(Guid.NewGuid(), "officer-1", Now);
         return loan;
     }
 
     private static Loan ActiveLoan()
     {
         var loan = ApprovedLoan();
-        loan.Disburse(Principal, Now);
+        loan.Disburse(Principal, Guid.NewGuid(), "officer", Now);
         return loan;
     }
 
@@ -44,7 +44,7 @@ public class LoanGuardTests
     private static Loan RejectedLoan()
     {
         var loan = OriginatedLoan();
-        loan.Reject("officer-1", "insufficient income", Now);
+        loan.Reject(Guid.NewGuid(), "officer-1", "insufficient income", Now);
         return loan;
     }
 
@@ -55,7 +55,7 @@ public class LoanGuardTests
     {
         var loan = ApprovedLoan();
 
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve("officer-2", Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve(Guid.NewGuid(), "officer-2", Now));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class LoanGuardTests
     {
         var loan = ApprovedLoan();
 
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Reject("officer-2", "changed mind", Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Reject(Guid.NewGuid(), "officer-2", "changed mind", Now));
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class LoanGuardTests
     {
         var loan = OriginatedLoan();
 
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Disburse(Principal, Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Disburse(Principal, Guid.NewGuid(), "officer", Now));
     }
 
     [Fact]
@@ -113,8 +113,8 @@ public class LoanGuardTests
     {
         var loan = RejectedLoan();
 
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve("officer-1", Now));
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Disburse(Principal, Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve(Guid.NewGuid(), "officer-1", Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Disburse(Principal, Guid.NewGuid(), "officer", Now));
         Assert.Throws<InvalidLoanTransitionException>(
             () => loan.ReceivePayment(Guid.NewGuid(), 1_000m, 1, "evt_test_1", Now));
     }
@@ -124,7 +124,7 @@ public class LoanGuardTests
     {
         var loan = SettledLoan();
 
-        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve("officer-1", Now));
+        Assert.Throws<InvalidLoanTransitionException>(() => loan.Approve(Guid.NewGuid(), "officer-1", Now));
         Assert.Throws<InvalidLoanTransitionException>(
             () => loan.ReceivePayment(Guid.NewGuid(), 1_000m, 1, "evt_test_1", Now));
         Assert.Throws<InvalidLoanTransitionException>(() => loan.MarkDefaulted(91, Now));
@@ -157,6 +157,6 @@ public class LoanGuardTests
     {
         var loan = ApprovedLoan();
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => loan.Disburse(Principal - 1m, Now));
+        Assert.Throws<ArgumentOutOfRangeException>(() => loan.Disburse(Principal - 1m, Guid.NewGuid(), "officer", Now));
     }
 }

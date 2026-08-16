@@ -18,8 +18,8 @@ public class LoanReadModelProjectionTests
         var customerId = Guid.NewGuid();
 
         var loan = Loan.Originate(loanId, customerId, 120_000m, 0.12m, RateType.Effective, 12, Origin);
-        loan.Approve("officer", Origin);
-        loan.Disburse(120_000m, Origin);
+        loan.Approve(Guid.NewGuid(), "officer", Origin);
+        loan.Disburse(120_000m, Guid.NewGuid(), "officer", Origin);
         var firstPayment = loan.Schedule![0].Payment;
         loan.ReceivePayment(Guid.NewGuid(), firstPayment, 1, "evt_read_1", Origin.AddMonths(1));
         var expectedOutstanding = loan.OutstandingBalance;
@@ -59,8 +59,8 @@ public class LoanReadModelProjectionTests
     {
         var loanId = Guid.NewGuid();
         var loan = Loan.Originate(loanId, Guid.NewGuid(), 60_000m, 0.18m, RateType.Effective, 6, Origin);
-        loan.Approve("officer", Origin);
-        loan.Disburse(60_000m, Origin);
+        loan.Approve(Guid.NewGuid(), "officer", Origin);
+        loan.Disburse(60_000m, Guid.NewGuid(), "officer", Origin);
         var firstPayment = loan.Schedule![0].Payment;
         loan.ReceivePayment(Guid.NewGuid(), firstPayment, 1, "evt_idem_1", Origin.AddMonths(1));
         var envelopes = ReadModelTesting.Envelopes(loan);
