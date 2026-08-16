@@ -36,7 +36,7 @@ A mini loan management API built around financial-services backend patterns: amo
 | Secrets | HashiCorp Vault behind an `ISecretProvider` interface |
 | Observability | Serilog → Seq |
 | Testing | xUnit + Moq; k6 for load testing |
-| CI | GitHub Actions (build, test, secret scan) |
+| CI | GitHub Actions (build, full test suite, HA smoke, secret scan) |
 
 ## Environment
 
@@ -66,11 +66,11 @@ Full design docs live in **[`docs/`](docs/)**:
 
 ## Run It Locally
 
-Requires Docker Desktop and the .NET 8 SDK.
+Requires Docker Desktop and the .NET 8 SDK (or newer — the solution is a classic `.sln`).
 
 ```bash
 git clone <this repo> && cd loan-project
-docker compose up -d      # SQL Server 2022 + MongoDB 8 + Vault + Redpanda + RabbitMQ + Redis
+docker compose up -d --wait   # SQL Server 2022 + MongoDB 8 + Vault + Redpanda + RabbitMQ + Redis (waits until healthy)
 sh scripts/seed-vault-dev.sh   # put the local dev secrets into Vault (idempotent)
 
 dotnet test               # unit + integration tests; the schema is migrated on first use
@@ -202,8 +202,8 @@ X-Upstream-Addr: 172.19.0.9:8080
 
 Every push runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — three jobs, no deploy (this is a local-first showcase):
 
-- **Build & full test suite** — brings the *whole* system up with `docker compose up -d --wait` (SQL Server, Redpanda, RabbitMQ, MongoDB, Redis, Vault), seeds the dev Vault, then runs all tests against it. The integration tests hit the compose services on `localhost`, exactly like a developer's machine — the same suite that must pass locally passes in CI. (The `.slnx` solution is built with the .NET 9 SDK; the net8.0 tests run on the 8.0 runtime.)
-- **API image builds** — `docker build` of the multi-stage Dockerfile, so a broken image fails CI before it is ever run.
+- **Build & full test suite** — brings the *whole* system up with `docker compose up -d --wait` (SQL Server, Redpanda, RabbitMQ, MongoDB, Redis, Vault), seeds the dev Vault, then runs all tests against it. The integration tests hit the compose services on `localhost`, exactly like a developer's machine — the same suite that must pass locally passes in CI. The test projects run sequentially so a fresh database is migrated once, not raced.
+- **HA stack smoke test** — builds the image and starts the full replica + nginx topology (`docker-compose.ha.yml`), then checks `/health/ready` through the load balancer, so a broken image or broken HA wiring fails CI.
 - **Secret scan** — `gitleaks` over the full history (the repo will become public). The known non-secret dev defaults are allowlisted in [`.gitleaks.toml`](.gitleaks.toml); a real credential fails the job.
 
 **Secret boundary.** No static secret lives in the workflow. Deploy-time credentials would come from GitHub Secrets (none needed here — there is no deploy); every *runtime* secret (Stripe key, connection strings) is read from Vault through `ISecretProvider` and is never present in CI.
