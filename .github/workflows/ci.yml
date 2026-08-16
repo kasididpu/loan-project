@@ -19,14 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The solution is a .slnx, which needs the .NET 9 SDK to build; the 8.0
-      # runtime (bundled with the 8.0 SDK) runs the net8.0 test assemblies.
+      # Classic .sln builds on the .NET 8 SDK, so a machine with only .NET 8 can
+      # clone and run — no newer SDK required.
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
+          dotnet-version: 8.0.x
 
       # The whole system runs on docker compose by design. --wait blocks until
       # every service with a healthcheck is healthy, so the integration tests
@@ -41,7 +39,7 @@ jobs:
         run: sh scripts/seed-vault-dev.sh
 
       - name: Build
-        run: dotnet build LoanProject.slnx --configuration Release
+        run: dotnet build LoanProject.sln --configuration Release
 
       # Integration tests hit the compose services on localhost, exactly like a
       # developer's machine — same connection strings, same Vault, same seed.
