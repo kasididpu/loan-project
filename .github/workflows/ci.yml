@@ -4,9 +4,9 @@ name: CI
 # this project is a local-first showcase (the Pi5/cloud deploy path was dropped).
 on:
   push:
-    branches: ['**']
+    branches: [main] # confirm main is green after a merge
   pull_request:
-    branches: [main]
+    branches: [main] # gate every PR before it can merge (WIP branch pushes don't run CI)
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -63,15 +63,32 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  docker-image:
-    name: API image builds
+  ha-smoke:
+    name: HA stack smoke test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Verify the multi-stage Dockerfile still produces an image (no push — the
-      # image is only ever run locally via docker-compose.ha.yml).
-      - name: Build the API image
-        run: docker build -t loan-api:ci .
+
+      # Builds the image AND runs it in the real replica/nginx topology, so a
+      # broken Dockerfile OR broken HA wiring fails CI. --wait blocks until every
+      # replica's container healthcheck (/health/live) passes.
+      - name: Build image and start the HA stack
+        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build --wait --wait-timeout 300
+
+      # Readiness through the load balancer proves nginx routes to a replica that
+      # can reach its backing services. No Vault seeding needed: containers fall
+      # back to the service-name connection strings, and readiness only pings the
+      # infrastructure (it does not require a migrated schema). Failover-under-load
+      # stays a manual demo (too timing-sensitive to be a stable CI gate).
+      - name: Readiness through nginx
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health/ready)
+          echo "GET :8080/health/ready -> $code"
+          test "$code" = "200"
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml down -v
 
   secret-scan:
     name: Secret scan (gitleaks)
