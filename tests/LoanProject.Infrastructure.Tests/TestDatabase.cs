@@ -11,9 +11,24 @@ namespace LoanProject.Infrastructure.Tests;
 /// </summary>
 internal static class TestDatabase
 {
-    public static string ConnectionString =>
+    // The raw string — used to build the migrating context below. It must NOT
+    // trigger migration itself, or the ConnectionString getter would recurse.
+    private static string RawConnectionString =>
         Environment.GetEnvironmentVariable("ConnectionStrings__LoanDb")
         ?? "Server=localhost,1433;Database=LoanDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True";
+
+    // Reading the connection string ensures the schema exists first (once per run,
+    // via the Lazy below). This matters on a fresh server: the event-store tests
+    // open a raw SqlConnection with this string instead of going through
+    // CreateContext(), so without this the database might not exist yet.
+    public static string ConnectionString
+    {
+        get
+        {
+            _ = Migrated.Value;
+            return RawConnectionString;
+        }
+    }
 
     // Migrate once per run (idempotent), same treatment as TestReadDatabase — so a
     // fresh clone can `dotnet test` without a separate `dotnet ef database update`.
@@ -34,10 +49,13 @@ internal static class TestDatabase
     private static LoanDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<LoanDbContext>()
-            .UseSqlServer(ConnectionString)
+            .UseSqlServer(RawConnectionString)
             .Options;
-        // A fixed test key: integration tests need encrypt/decrypt to round-trip,
-        // not to protect anything.
-        return new LoanDbContext(options, new AesGcmFieldEncryptor("test-field-encryption-key"));
+        // Use the app's dev field key, NOT an independent test key: the seed
+        // customers have fixed ids shared with the app and the API test assembly,
+        // so whichever process seeds first must write ciphertext the others can
+        // decrypt. A private test key would make cross-assembly reads fail on a
+        // fresh database (CI). This value matches the dev default in Vault.
+        return new LoanDbContext(options, new AesGcmFieldEncryptor("loan-dev-field-encryption-key-change-me"));
     }
 }
