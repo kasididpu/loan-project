@@ -381,6 +381,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check 
 app.MapAuth();
 app.MapStripeWebhook();
 app.MapRates();
+app.MapAmortization();
 app.MapLoans();
 app.MapReports();
 app.MapCustomers();

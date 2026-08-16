@@ -24,6 +24,14 @@ public static class StripeWebhookEndpoints
         RecordStripePaymentHandler handler,
         CancellationToken cancellationToken)
     {
+        // A missing or empty signature header is not a Stripe request — reject it
+        // before doing any work (reading the body, a per-request Vault fetch).
+        // EventUtility throws NullReferenceException (not StripeException) on a
+        // null header, which load testing surfaced as an unhandled 500.
+        string? signature = request.Headers["Stripe-Signature"];
+        if (string.IsNullOrEmpty(signature))
+            return Results.BadRequest();
+
         var payload = await new StreamReader(request.Body).ReadToEndAsync(cancellationToken);
         var webhookSecret = await secretProvider.GetSecretAsync("StripeWebhookSecret", cancellationToken);
 
@@ -34,12 +42,13 @@ public static class StripeWebhookEndpoints
             // moves ahead of the SDK's pinned one; the HMAC signature check
             // (the actual security boundary) is unaffected by this flag.
             stripeEvent = EventUtility.ConstructEvent(
-                payload, request.Headers["Stripe-Signature"], webhookSecret,
-                throwOnApiVersionMismatch: false);
+                payload, signature, webhookSecret, throwOnApiVersionMismatch: false);
         }
-        catch (StripeException)
+        catch (Exception exception) when (exception is StripeException or FormatException or ArgumentException)
         {
-            // Wrong or missing signature: not from Stripe. No detail leaks back.
+            // Any failure to verify or parse an untrusted request is a 400, never
+            // a 500: a wrong signature or a garbage header (e.g. a non-numeric
+            // timestamp) must not leak an exception. No detail leaks back.
             return Results.BadRequest();
         }
 
