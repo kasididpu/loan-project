@@ -1,0 +1,14 @@
+meta {
+  name: 07 Portfolio report
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/reports/portfolio-summary
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}

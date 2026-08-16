@@ -1,0 +1,19 @@
+meta {
+  name: 05 Loan status (Read DB)
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/loans/{{loanId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
+
+docs {
+  Reads the CQRS Read side. It is eventually consistent — if the projection has
+  not caught up yet, retry after a moment.
+}

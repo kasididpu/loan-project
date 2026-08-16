@@ -1,0 +1,15 @@
+meta {
+  name: 04 Disburse loan
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/loans/{{loanId}}/disburse
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{token}}
+}
