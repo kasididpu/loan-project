@@ -66,7 +66,7 @@ Full design docs live in **[`docs/`](docs/)**:
 
 ## Run It Locally
 
-Requires Docker Desktop and the .NET 8 SDK (or newer — the solution is a classic `.sln`).
+Requires Docker Desktop and the .NET 8 SDK (or newer — the solution is a classic `.sln`). The helper scripts are POSIX `sh`; on Windows run them from Git Bash or WSL.
 
 ```bash
 git clone <this repo> && cd loan-project
@@ -79,6 +79,28 @@ dotnet run --project src/LoanProject.Api   # dev boot migrates + seeds sample da
 
 Both databases are migrated automatically — the app on dev boot, the tests on
 first use — so no manual `dotnet ef database update` step is needed to clone and run.
+
+### Stripe keys (optional)
+
+The core flow — loans, amortization, event sourcing, CQRS, reporting — runs
+**without any Stripe keys**. Only the Stripe webhook and the scheduled
+reconciliation job need them. Until they are set, the reconciliation job (which
+runs on a timer in dev) just logs `Reconciliation run failed … StripeSecretKey
+not found` every few minutes and the app keeps running — that message is
+expected, not a crash.
+
+To turn on the Stripe (Test Mode) features:
+
+```bash
+cp scripts/vault-secrets.local.env.example scripts/vault-secrets.local.env
+# then edit that file and set your Stripe TEST-MODE keys:
+#   StripeSecretKey=sk_test_...
+#   StripeWebhookSecret=whsec_...      # from `stripe listen` or the Dashboard
+sh scripts/seed-vault-dev.sh           # re-run — patches the keys into Vault
+```
+
+`scripts/vault-secrets.local.env` is gitignored and never committed, so real keys
+never enter the repo. Live keys are never used — Stripe stays in Test Mode.
 
 The dev seed creates two customers and one event-sourced loan with real
 history in the ledger (originated → approved → disbursed → first
