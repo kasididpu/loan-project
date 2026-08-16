@@ -1,0 +1,113 @@
+name: CI
+
+# build + full test suite + a Docker image build + a secret scan. No deploy:
+# this project is a local-first showcase (the Pi5/cloud deploy path was dropped).
+on:
+  push:
+    branches: [main] # confirm main is green after a merge
+  pull_request:
+    branches: [main] # gate every PR before it can merge (WIP branch pushes don't run CI)
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & full test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The solution is a .slnx, which needs the .NET 9 SDK to build; the 8.0
+      # runtime (bundled with the 8.0 SDK) runs the net8.0 test assemblies.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      # The whole system runs on docker compose by design. --wait blocks until
+      # every service with a healthcheck is healthy, so the integration tests
+      # never race a backing service that is still starting.
+      - name: Start infrastructure
+        run: docker compose up -d --wait --wait-timeout 300
+
+      # Non-secret dev defaults into the dev Vault. Stripe keys are intentionally
+      # absent in CI (the gitignored local env file is not here) — the tests do
+      # not need them, so the seeder just skips that step.
+      - name: Seed dev Vault
+        run: sh scripts/seed-vault-dev.sh
+
+      - name: Build
+        run: dotnet build LoanProject.slnx --configuration Release
+
+      # Integration tests hit the compose services on localhost, exactly like a
+      # developer's machine — same connection strings, same Vault, same seed.
+      #
+      # Run the assemblies SEQUENTIALLY, not as one `dotnet test <solution>`:
+      # a fresh CI database is migrated on first use, and two test processes
+      # migrating it at once race (SQL error 2705 — the migration applies twice).
+      # Domain first (no DB), then Infrastructure migrates the schema, then the
+      # API tests find it already migrated. Locally this never showed because the
+      # dev database is already migrated, so every Migrate() is a no-op.
+      - name: Test - Domain (unit)
+        run: dotnet test tests/LoanProject.Domain.Tests/LoanProject.Domain.Tests.csproj --configuration Release --no-build --verbosity normal
+      - name: Test - Infrastructure (integration)
+        run: dotnet test tests/LoanProject.Infrastructure.Tests/LoanProject.Infrastructure.Tests.csproj --configuration Release --no-build --verbosity normal
+      - name: Test - API (integration)
+        run: dotnet test tests/LoanProject.Api.Tests/LoanProject.Api.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose down -v
+
+  ha-smoke:
+    name: HA stack smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the image and start the full replica/nginx/worker topology. No
+      # --wait on container health: the single worker migrates the fresh database
+      # before it starts serving, so its own healthcheck is briefly red — which is
+      # irrelevant to the serve path this job smokes. Readiness is polled through
+      # nginx instead (the api replicas don't migrate, so they come up promptly).
+      - name: Build image and start the HA stack
+        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
+
+      # Poll /health/ready through the load balancer: proves nginx routes to a
+      # replica that can reach its backing services. No Vault seeding needed —
+      # containers fall back to the service-name connection strings, and readiness
+      # only pings the infrastructure (no migrated schema required). Failover-under
+      # -load stays a manual demo (too timing-sensitive to be a stable CI gate).
+      - name: Readiness through nginx
+        run: |
+          for attempt in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health/ready 2>/dev/null || true)
+            echo "attempt $attempt: GET :8080/health/ready -> ${code:-none}"
+            [ "$code" = "200" ] && exit 0
+            sleep 3
+          done
+          echo "readiness not reached in time"; exit 1
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml down -v
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — the repo will become public, so scan every commit
+
+      # Run the gitleaks binary directly (no marketplace action / license gate).
+      # --redact keeps any hit out of the logs; the config allowlists the known
+      # non-secret dev defaults so only a real leak fails the job.
+      - name: Run gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --verbose --exit-code 1

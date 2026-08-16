@@ -11,9 +11,22 @@ namespace LoanProject.Infrastructure.Tests;
 /// </summary>
 internal static class TestReadDatabase
 {
-    public static string ConnectionString =>
+    // Raw string used to build the migrating context — must not trigger migration
+    // itself (that would recurse through the ConnectionString getter below).
+    private static string RawConnectionString =>
         Environment.GetEnvironmentVariable("ConnectionStrings__LoanReadDb")
         ?? "Server=localhost,1433;Database=LoanReadDb;User Id=sa;Password=LoanDev!Passw0rd;TrustServerCertificate=True";
+
+    // Reading the connection string ensures the schema exists first, so tests that
+    // use this string directly still find the database on a fresh server.
+    public static string ConnectionString
+    {
+        get
+        {
+            _ = Migrated.Value;
+            return RawConnectionString;
+        }
+    }
 
     private static readonly Lazy<bool> Migrated = new(() =>
     {
@@ -31,7 +44,7 @@ internal static class TestReadDatabase
     private static ReadDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<ReadDbContext>()
-            .UseSqlServer(ConnectionString)
+            .UseSqlServer(RawConnectionString)
             .Options;
         return new ReadDbContext(options);
     }

@@ -1,0 +1,20 @@
+# gitleaks config for CI. Starts from the default ruleset, then allowlists the
+# project's documented NON-SECRET local dev defaults so the scan does not
+# false-positive on them. Real secrets never enter the repo: Stripe test keys
+# live only in the gitignored scripts/vault-secrets.local.env, and every runtime
+# secret is read from Vault through ISecretProvider. This allowlist only silences
+# known placeholders — never a real credential.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secret local dev defaults (match docker-compose and the seed scripts)"
+regexes = [
+  '''loan-dev-jwt-signing-key-change-me-0123456789abcdef''',
+  '''loan-dev-field-encryption-key-change-me''',
+  '''dev-oauth-client-secret-change-me''',
+  '''LoanDev!Passw0rd''',
+  '''LoanDevMongo1''',
+  '''Dev!Passw0rd''',
+  '''loan-dev-root''',
+]
