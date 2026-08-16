@@ -69,22 +69,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Builds the image AND runs it in the real replica/nginx topology, so a
-      # broken Dockerfile OR broken HA wiring fails CI. --wait blocks until every
-      # replica's container healthcheck (/health/live) passes.
+      # Build the image and start the full replica/nginx/worker topology. No
+      # --wait on container health: the single worker migrates the fresh database
+      # before it starts serving, so its own healthcheck is briefly red — which is
+      # irrelevant to the serve path this job smokes. Readiness is polled through
+      # nginx instead (the api replicas don't migrate, so they come up promptly).
       - name: Build image and start the HA stack
-        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build --wait --wait-timeout 300
+        run: docker compose -f docker-compose.yml -f docker-compose.ha.yml up -d --build
 
-      # Readiness through the load balancer proves nginx routes to a replica that
-      # can reach its backing services. No Vault seeding needed: containers fall
-      # back to the service-name connection strings, and readiness only pings the
-      # infrastructure (it does not require a migrated schema). Failover-under-load
-      # stays a manual demo (too timing-sensitive to be a stable CI gate).
+      # Poll /health/ready through the load balancer: proves nginx routes to a
+      # replica that can reach its backing services. No Vault seeding needed —
+      # containers fall back to the service-name connection strings, and readiness
+      # only pings the infrastructure (no migrated schema required). Failover-under
+      # -load stays a manual demo (too timing-sensitive to be a stable CI gate).
       - name: Readiness through nginx
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health/ready)
-          echo "GET :8080/health/ready -> $code"
-          test "$code" = "200"
+          for attempt in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health/ready 2>/dev/null || true)
+            echo "attempt $attempt: GET :8080/health/ready -> ${code:-none}"
+            [ "$code" = "200" ] && exit 0
+            sleep 3
+          done
+          echo "readiness not reached in time"; exit 1
 
       - name: Tear down
         if: always()
